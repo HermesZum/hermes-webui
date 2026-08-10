@@ -7340,3 +7340,23 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 .cognitive-prune-log{margin-top:14px;font-size:12px}
 .cognitive-prune-log summary{cursor:pointer;color:var(--muted)}
 .cognitive-prune-log pre{max-height:220px;overflow:auto;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--code-bg);font-size:11px;white-space:pre-wrap;word-break:break-word}
+.cognitive-sync{margin-bottom:14px;border:1px dashed var(--border);border-radius:8px;padding:8px 12px;font-size:12px}
+.cognitive-sync summary{cursor:pointer;color:var(--text);font-weight:600}
+.cognitive-sync-body{margin-top:10px}
+.cognitive-sync-desc{color:var(--muted);margin-bottom:10px;line-height:1.5}
+.cognitive-sync-actions{display:flex;gap:8px;margin-bottom:10px}
+.cognitive-sync-target{border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px;background:var(--bg)}
+.cognitive-sync-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:6px}
+.cognitive-sync-head strong{font-size:13px}
+.cognitive-sync-keep{color:var(--ok, #3fb950);font-size:11px;border:1px solid currentColor;border-radius:999px;padding:1px 8px}
+.cognitive-sync-compact{color:#d29922;font-size:11px;border:1px solid currentColor;border-radius:999px;padding:1px 8px}
+.cognitive-sync-remove{color:#f85149;font-size:11px;border:1px solid currentColor;border-radius:999px;padding:1px 8px}
+.cognitive-sync-list{list-style:none;margin:0;padding:0}
+.cognitive-sync-item{display:flex;gap:8px;align-items:baseline;padding:2px 0;border-bottom:1px solid var(--border, rgba(128,128,128,0.15))}
+.cognitive-sync-item:last-child{border-bottom:none}
+.cognitive-sync-icon{width:14px;text-align:center;flex-shrink:0}
+.cognitive-sync-keep .cognitive-sync-icon{color:var(--ok, #3fb950)}
+.cognitive-sync-compact .cognitive-sync-icon{color:#d29922}
+.cognitive-sync-remove .cognitive-sync-icon{color:#f85149}
+.cognitive-sync-reason{color:var(--muted);flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cognitive-sync-preview{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

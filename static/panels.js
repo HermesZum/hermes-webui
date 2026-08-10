@@ -5456,6 +5456,8 @@ let _cognitiveQuery = '';
 let _cognitiveFilter = 'all';
 let _cognitiveAddOpen = false;
 let _cognitiveAddDraft = '';
+let _cognitiveSyncOpen = false;
+let _cognitiveSyncPlan = null;
 
 async function _loadCognitiveData(force) {
   try {
@@ -5533,6 +5535,10 @@ function _renderCognitiveMemoryDetail() {
     </div>
     <div class="cognitive-stats">${chips}</div>
     <div id="cognitiveAddForm" style="${_cognitiveAddOpen ? '' : 'display:none'}"></div>
+    <details class="cognitive-sync" ${_cognitiveSyncOpen ? 'open' : ''}>
+      <summary onclick="cognitiveToggleSync()">Compact built-in memory (MEMORY.md / USER.md)</summary>
+      <div id="cognitiveSyncBody" class="cognitive-sync-body"></div>
+    </details>
     ${listHtml}
     ${pruneLog}
   </div>`;
@@ -5605,6 +5611,118 @@ function cognitiveToggleAdd() {
   _cognitiveAddOpen = !_cognitiveAddOpen;
   if (!_cognitiveAddOpen) _cognitiveAddDraft = '';
   _renderCognitiveMemoryDetail();
+}
+
+// ── Built-in memory sync (cognitive_sync_memory) ─────────────────────────
+
+function cognitiveToggleSync() {
+  _cognitiveSyncOpen = !_cognitiveSyncOpen;
+  if (_cognitiveSyncOpen && !_cognitiveSyncPlan) {
+    cognitiveSyncPlan('both');
+  }
+}
+
+async function cognitiveSyncPlan(target) {
+  const bodyEl = $('cognitiveSyncBody');
+  if (!bodyEl) return;
+  if (_cognitiveBusy) return;
+  _cognitiveBusy = true;
+  bodyEl.innerHTML = '<div class="memory-empty">Building plan…</div>';
+  try {
+    const res = await api('/api/memory/cognitive', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'sync_plan', target: target }),
+    });
+    if (!res || !res.ok) {
+      bodyEl.innerHTML = `<div class="memory-empty">${esc((res && res.error) ? res.error : 'Plan failed')}</div>`;
+      return;
+    }
+    _cognitiveSyncPlan = res;
+    _renderCognitiveSyncPlan(bodyEl);
+  } catch (e) {
+    bodyEl.innerHTML = `<div class="memory-empty">${esc((e && e.message) ? e.message : String(e))}</div>`;
+  } finally {
+    _cognitiveBusy = false;
+  }
+}
+
+function _renderCognitiveSyncPlan(bodyEl) {
+  const plan = _cognitiveSyncPlan;
+  if (!plan || !Array.isArray(plan.results)) {
+    bodyEl.innerHTML = '<div class="memory-empty">No plan available.</div>';
+    return;
+  }
+  const rows = plan.results.map(r => {
+    const p = r.plan || {};
+    const counts = p.counts || {};
+    const badge = (action, count) => {
+      if (!count) return '';
+      const cls = action === 'keep' ? 'cognitive-sync-keep'
+                : action === 'compact' ? 'cognitive-sync-compact'
+                : 'cognitive-sync-remove';
+      return `<span class="${cls}">${action}: ${count}</span>`;
+    };
+    const items = (p.decisions || []).map(d => {
+      const icon = d.action === 'keep' ? '✔' : d.action === 'compact' ? '↘' : '✖';
+      return `<li class="cognitive-sync-item cognitive-sync-${d.action}">
+        <span class="cognitive-sync-icon">${icon}</span>
+        <span class="cognitive-sync-reason">${esc(d.reason)}</span>
+        <span class="cognitive-sync-preview">${esc((d.entry_preview || '').slice(0, 70))}</span>
+      </li>`;
+    }).join('');
+    return `<div class="cognitive-sync-target">
+      <div class="cognitive-sync-head">
+        <strong>${esc(p.target || '')}.md</strong>
+        <span class="cognitive-meta">${esc(p.usage_pct || 0)}% of ${esc(p.limit || '')}-char limit</span>
+        ${badge('keep', counts.keep)}${badge('compact', counts.compact)}${badge('remove', counts.remove)}
+      </div>
+      <ul class="cognitive-sync-list">${items || '<li class="cognitive-meta">No entries.</li>'}</ul>
+    </div>`;
+  }).join('');
+  bodyEl.innerHTML = `
+    <div class="cognitive-sync-desc">Cross-references the cognitive store. Critical rules (corrections/preferences), pinned memories, and un-mirrored entries are always kept. Only redundant non-critical entries are compacted or removed.</div>
+    <div class="cognitive-sync-actions">
+      <button type="button" class="btn-secondary" onclick="cognitiveSyncApply()">Apply compaction</button>
+      <button type="button" class="btn-secondary" onclick="cognitiveSyncPlan('both')">Refresh plan</button>
+    </div>
+    ${rows}`;
+}
+
+async function cognitiveSyncApply() {
+  if (_cognitiveBusy) return;
+  const plan = _cognitiveSyncPlan;
+  if (!plan) return;
+  const total = (plan.results || []).reduce((acc, r) => {
+    const c = (r.plan || {}).counts || {};
+    return acc + (c.compact || 0) + (c.remove || 0);
+  }, 0);
+  if (total === 0) {
+    alert('Nothing to compact — all entries are already kept.');
+    return;
+  }
+  if (!confirm(`Apply compaction? ${total} entry/entries will be removed or shortened from the built-in memory files.\n\nA backup is created first and every change is logged to the prune log.`)) {
+    return;
+  }
+  _cognitiveBusy = true;
+  const bodyEl = $('cognitiveSyncBody');
+  try {
+    const res = await api('/api/memory/cognitive', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'sync_apply', target: plan.target || 'both' }),
+    });
+    if (!res || !res.ok) {
+      alert((res && res.error) ? res.error : 'Apply failed');
+      return;
+    }
+    _cognitiveSyncPlan = null;
+    alert('Compaction applied. Restart Hermes (or the WebUI service) so the running agent picks up the new memory files.');
+    await _loadCognitiveData(true);
+    if (bodyEl) bodyEl.innerHTML = '<div class="memory-empty">Compaction applied. Refresh the plan to see the new state.</div>';
+  } catch (e) {
+    alert((e && e.message) ? e.message : String(e));
+  } finally {
+    _cognitiveBusy = false;
+  }
 }
 
 function cognitiveAddContentTyped(v) {
