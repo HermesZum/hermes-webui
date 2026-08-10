@@ -13869,6 +13869,13 @@ def handle_get(handler, parsed) -> bool:
     if parsed.path == "/api/memory":
         return _handle_memory_read(handler, parsed)
 
+    # ── Cognitive memory (GET) — hermes-cognitive-memory plugin store ──
+    if parsed.path == "/api/memory/cognitive":
+        from api.cognitive_bridge import handle_cognitive_get
+
+        handle_cognitive_get(handler, parsed)
+        return True
+
     # ── Profile API (GET) ──
     if parsed.path == "/api/profiles":
         from api import profiles as profiles_api
@@ -15799,6 +15806,13 @@ def handle_post(handler, parsed) -> bool:
     # ── Memory (POST) ──
     if parsed.path == "/api/memory/write":
         return _handle_memory_write(handler, body)
+
+    # ── Cognitive memory (POST) — pin/unpin/delete/add via plugin store ──
+    if parsed.path == "/api/memory/cognitive":
+        from api.cognitive_bridge import handle_cognitive_post
+
+        handle_cognitive_post(handler, body)
+        return True
 
     if parsed.path in {"/api/gateway/start", "/api/gateway/stop", "/api/gateway/restart"}:
         return _handle_gateway_lifecycle(handler, parsed.path.rsplit("/", 1)[-1], body)
