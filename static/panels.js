@@ -5250,6 +5250,7 @@ const MEMORY_SECTIONS = [
   { key: 'user',   labelKey: 'user_profile', emptyKey: 'no_profile_yet', iconKey: 'user' },
   { key: 'soul',   labelKey: 'agent_soul', emptyKey: 'no_soul_yet', iconKey: 'sparkles' },
   { key: 'cognitive', label: 'Cognitive Memory', empty: '', iconKey: 'book-open', readOnly: true },
+  { key: 'forge', label: 'Forge Tools', empty: '', iconKey: 'wrench', readOnly: true },
   { key: 'project_context', label: 'Project Context', empty: 'No project context file found for this workspace.', iconKey: 'file-text', readOnly: true },
   { key: 'external_notes', labelKey: 'external_notes_sources', emptyKey: 'external_notes_empty', iconKey: 'book-open' },
 ];
@@ -5388,6 +5389,11 @@ function _renderMemoryDetail(section) {
   if (section === 'cognitive') {
     _renderCognitiveMemoryDetail();
     if (!_cognitiveData) _loadCognitiveData();
+    return;
+  }
+  if (section === 'forge') {
+    _renderForgeToolsDetail();
+    if (!_forgeData) _loadForgeData();
     return;
   }
 
@@ -5807,6 +5813,184 @@ function _showCognitiveAddError(msg) {
     el.textContent = msg;
     el.style.display = '';
   }
+}
+
+// ── Forge tools (hermes-tool-forge plugin) ──────────────────────────────────
+
+let _forgeData = null;
+let _forgeBusy = false;
+let _forgeQuery = '';
+let _forgeSelectedTool = null;
+
+async function _loadForgeData(force) {
+  try {
+    _forgeData = await api('/api/forge', {cache:'no-store', timeoutMs:15000});
+  } catch (e) {
+    _forgeData = {available:false, reason:(e && e.message) ? e.message : String(e)};
+  }
+  _renderForgeToolsDetail();
+}
+
+function _renderForgeToolsDetail() {
+  const title = $('memoryDetailTitle');
+  const body = $('memoryDetailBody');
+  const empty = $('memoryDetailEmpty');
+  if (!title || !body) return;
+  title.textContent = 'Forge Tools';
+  const data = _forgeData;
+  if (!data) {
+    body.innerHTML = '<div class="main-view-content"><div class="memory-empty">Loading…</div></div>';
+    body.style.display = '';
+    if (empty) empty.style.display = 'none';
+    _memoryMode = 'read';
+    _setMemoryHeaderButtons('read');
+    return;
+  }
+  if (data.available === false) {
+    body.innerHTML = `<div class="main-view-content"><div class="memory-empty">${esc(data.reason || 'Tool forge store unavailable.')}</div></div>`;
+    body.style.display = '';
+    if (empty) empty.style.display = 'none';
+    _memoryMode = 'read';
+    _setMemoryHeaderButtons('read');
+    return;
+  }
+  const stats = data.stats || {};
+  const tools = Array.isArray(data.tools) ? data.tools : [];
+  const chip = (label, value) => `<span class="cognitive-chip"><strong>${esc(value)}</strong> ${esc(label)}</span>`;
+  const chips = [
+    chip('total', stats.total || 0),
+    chip('approved', stats.approved || 0),
+    chip('tested', stats.tested || 0),
+    chip('promoted', stats.promoted || 0),
+  ].join('');
+  const filtered = tools.filter(t => {
+    if (_forgeQuery) {
+      const q = _forgeQuery.toLowerCase();
+      if (!(t.name || '').toLowerCase().includes(q) && !(t.description || '').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+  const listHtml = filtered.length
+    ? filtered.map(t => _forgeCardHtml(t)).join('')
+    : `<div class="memory-empty">${tools.length ? 'No tools match the current filter.' : 'No forged tools yet. Ask Hermes to forge a tool to see it here.'}</div>`;
+  // Detail view for selected tool
+  const detailHtml = _forgeSelectedTool ? _forgeToolDetailHtml(_forgeSelectedTool) : '';
+  body.innerHTML = `<div class="main-view-content">
+    <div class="cognitive-controls">
+      <input id="forgeSearch" type="search" placeholder="Filter tools…" value="${esc(_forgeQuery)}" oninput="forgeSetQuery(this.value)" />
+      <button type="button" class="btn-secondary" onclick="_loadForgeData(true)">Refresh</button>
+    </div>
+    <div class="cognitive-stats">${chips}</div>
+    ${detailHtml}
+    ${listHtml}
+  </div>`;
+  body.style.display = '';
+  if (empty) empty.style.display = 'none';
+  _memoryMode = 'read';
+  _setMemoryHeaderButtons('read');
+}
+
+function _forgeCardHtml(t) {
+  const id = esc(t.id || '');
+  const approved = t.judge_approved ? '<span class="cognitive-badge cognitive-badge-pinned">APPROVED</span>' : '<span class="cognitive-badge" style="background:#8a6d3b;color:#fff">PENDING</span>';
+  const tested = t.test_passed ? '<span class="cognitive-badge" style="background:#2d6a4f;color:#fff">TESTED</span>' : '';
+  const promoted = t.promoted ? '<span class="cognitive-badge cognitive-badge-hard">PROMOTED</span>' : '';
+  const code = (t.python_code || '').length > 200 ? esc((t.python_code || '').slice(0, 200)) + '…' : esc(t.python_code || '');
+  return `<section class="cognitive-card">
+    <div class="cognitive-card-head">
+      <strong>${esc(t.name || 'unnamed')}</strong>
+      ${approved}${tested}${promoted}
+      <span class="cognitive-meta">${esc(t.use_count || 0)} uses · ${esc(t.description || '').slice(0, 60)}</span>
+      <span class="cognitive-actions">
+        <button type="button" class="btn-secondary cognitive-btn" onclick="forgeViewTool('${id}')">View</button>
+        <button type="button" class="btn-secondary cognitive-btn cognitive-btn-danger" onclick="forgeDeleteTool('${id}')">Delete</button>
+      </span>
+    </div>
+    <div class="memory-content cognitive-content"><pre style="white-space:pre-wrap;font-size:12px">${code}</pre></div>
+  </section>`;
+}
+
+function _forgeToolDetailHtml(tool) {
+  const id = esc(tool.id || '');
+  const code = esc(tool.python_code || '');
+  const testOutput = tool.test_output ? esc(tool.test_output) : 'No test output';
+  const judgeVerdict = tool.judge_verdict ? esc(tool.judge_verdict) : 'No judge verdict';
+  const paramsSchema = esc(JSON.stringify(tool.params_schema || {}, null, 2));
+  return `<section class="cognitive-card cognitive-card-pinned" style="margin-bottom:12px">
+    <div class="cognitive-card-head">
+      <strong>${esc(tool.name || 'unnamed')}</strong>
+      <span class="cognitive-actions">
+        <button type="button" class="btn-secondary cognitive-btn" onclick="forgeCloseDetail()">Close</button>
+      </span>
+    </div>
+    <div style="margin-top:8px">
+      <div class="cognitive-meta" style="margin-bottom:4px">Description</div>
+      <div class="memory-content cognitive-content">${esc(tool.description || '')}</div>
+    </div>
+    <div style="margin-top:8px">
+      <div class="cognitive-meta" style="margin-bottom:4px">Parameters (JSON schema)</div>
+      <pre style="white-space:pre-wrap;font-size:12px;background:rgba(0,0,0,0.2);padding:8px;border-radius:4px">${paramsSchema}</pre>
+    </div>
+    <div style="margin-top:8px">
+      <div class="cognitive-meta" style="margin-bottom:4px">Python code</div>
+      <pre style="white-space:pre-wrap;font-size:12px;background:rgba(0,0,0,0.2);padding:8px;border-radius:4px">${code}</pre>
+    </div>
+    <div style="margin-top:8px">
+      <div class="cognitive-meta" style="margin-bottom:4px">Judge verdict</div>
+      <div class="memory-content cognitive-content">${judgeVerdict}</div>
+    </div>
+    <div style="margin-top:8px">
+      <div class="cognitive-meta" style="margin-bottom:4px">Test output</div>
+      <pre style="white-space:pre-wrap;font-size:12px;background:rgba(0,0,0,0.2);padding:8px;border-radius:4px">${testOutput}</pre>
+    </div>
+  </section>`;
+}
+
+async function forgeViewTool(id) {
+  if (_forgeBusy) return;
+  _forgeBusy = true;
+  try {
+    const res = await api('/api/forge', {method:'POST', body:JSON.stringify({action:'view', id:id})});
+    if (res && res.ok && res.tool) {
+      _forgeSelectedTool = res.tool;
+      _renderForgeToolsDetail();
+    } else {
+      alert((res && res.error) ? res.error : 'View failed');
+    }
+  } catch (e) {
+    alert((e && e.message) ? e.message : String(e));
+  } finally {
+    _forgeBusy = false;
+  }
+}
+
+function forgeCloseDetail() {
+  _forgeSelectedTool = null;
+  _renderForgeToolsDetail();
+}
+
+async function forgeDeleteTool(id) {
+  if (_forgeBusy) return;
+  if (!confirm('Delete this forged tool? This cannot be undone.')) return;
+  _forgeBusy = true;
+  try {
+    const res = await api('/api/forge', {method:'POST', body:JSON.stringify({action:'delete', id:id})});
+    if (res && res.ok) {
+      if (_forgeSelectedTool && _forgeSelectedTool.id === id) _forgeSelectedTool = null;
+      await _loadForgeData(true);
+    } else {
+      alert((res && res.error) ? res.error : 'Delete failed');
+    }
+  } catch (e) {
+    alert((e && e.message) ? e.message : String(e));
+  } finally {
+    _forgeBusy = false;
+  }
+}
+
+function forgeSetQuery(q) {
+  _forgeQuery = q;
+  _renderForgeToolsDetail();
 }
 
 async function loadNotesSources(force) {

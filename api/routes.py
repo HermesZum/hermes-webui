@@ -13876,6 +13876,13 @@ def handle_get(handler, parsed) -> bool:
         handle_cognitive_get(handler, parsed)
         return True
 
+    # ── Tool forge (GET) — hermes-tool-forge plugin store ──
+    if parsed.path == "/api/forge":
+        from api.forge_bridge import handle_forge_get
+
+        handle_forge_get(handler, parsed)
+        return True
+
     # ── Profile API (GET) ──
     if parsed.path == "/api/profiles":
         from api import profiles as profiles_api
@@ -15812,6 +15819,13 @@ def handle_post(handler, parsed) -> bool:
         from api.cognitive_bridge import handle_cognitive_post
 
         handle_cognitive_post(handler, body)
+        return True
+
+    # ── Tool forge (POST) — delete/view/promote_test via plugin store ──
+    if parsed.path == "/api/forge":
+        from api.forge_bridge import handle_forge_post
+
+        handle_forge_post(handler, body)
         return True
 
     if parsed.path in {"/api/gateway/start", "/api/gateway/stop", "/api/gateway/restart"}:
