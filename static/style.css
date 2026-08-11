@@ -7328,6 +7328,9 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 .cognitive-actions{display:inline-flex;gap:6px}
 .cognitive-btn{padding:3px 10px;font-size:12px}
 .cognitive-btn-danger{color:var(--error);border-color:var(--error)}
+.guardrails-finding{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:12px}
+.guardrails-finding code{font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-all}
+.guardrails-msg{margin-top:6px;padding:6px 8px;border-radius:6px;background:rgba(248,113,113,0.06);border:1px solid rgba(248,113,113,0.2);font-size:12px;color:var(--text);white-space:pre-wrap;word-break:break-word}
 .cognitive-bar{height:4px;border-radius:2px;background:var(--border);overflow:hidden;margin-bottom:8px}
 .cognitive-bar span{display:block;height:100%;background:var(--accent);transition:width .2s}
 .cognitive-content{font-size:13px;white-space:pre-wrap;word-break:break-word}

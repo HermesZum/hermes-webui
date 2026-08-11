@@ -13883,6 +13883,13 @@ def handle_get(handler, parsed) -> bool:
         handle_forge_get(handler, parsed)
         return True
 
+    # ── Guardrails (GET) — hermes-guardrails plugin audit store ──
+    if parsed.path == "/api/guardrails":
+        from api.guardrails_bridge import handle_guardrails_get
+
+        handle_guardrails_get(handler, parsed)
+        return True
+
     # ── Profile API (GET) ──
     if parsed.path == "/api/profiles":
         from api import profiles as profiles_api
@@ -15826,6 +15833,13 @@ def handle_post(handler, parsed) -> bool:
         from api.forge_bridge import handle_forge_post
 
         handle_forge_post(handler, body)
+        return True
+
+    # ── Guardrails (POST) — clear/view via plugin audit store ──
+    if parsed.path == "/api/guardrails":
+        from api.guardrails_bridge import handle_guardrails_post
+
+        handle_guardrails_post(handler, body)
         return True
 
     if parsed.path in {"/api/gateway/start", "/api/gateway/stop", "/api/gateway/restart"}:

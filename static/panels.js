@@ -5251,6 +5251,7 @@ const MEMORY_SECTIONS = [
   { key: 'soul',   labelKey: 'agent_soul', emptyKey: 'no_soul_yet', iconKey: 'sparkles' },
   { key: 'cognitive', label: 'Cognitive Memory', empty: '', iconKey: 'book-open', readOnly: true },
   { key: 'forge', label: 'Forge Tools', empty: '', iconKey: 'wrench', readOnly: true },
+  { key: 'guardrails', label: 'Guardrails', empty: '', iconKey: 'shield', readOnly: true },
   { key: 'project_context', label: 'Project Context', empty: 'No project context file found for this workspace.', iconKey: 'file-text', readOnly: true },
   { key: 'external_notes', labelKey: 'external_notes_sources', emptyKey: 'external_notes_empty', iconKey: 'book-open' },
 ];
@@ -5394,6 +5395,11 @@ function _renderMemoryDetail(section) {
   if (section === 'forge') {
     _renderForgeToolsDetail();
     if (!_forgeData) _loadForgeData();
+    return;
+  }
+  if (section === 'guardrails') {
+    _renderGuardrailsDetail();
+    if (!_guardrailsData) _loadGuardrailsData();
     return;
   }
 
@@ -5991,6 +5997,138 @@ async function forgeDeleteTool(id) {
 function forgeSetQuery(q) {
   _forgeQuery = q;
   _renderForgeToolsDetail();
+}
+
+/* ── Guardrails panel (hermes-guardrails plugin audit store) ── */
+let _guardrailsData = null;
+let _guardrailsQuery = '';
+let _guardrailsActionFilter = '';
+
+async function _loadGuardrailsData(force) {
+  try {
+    const qs = new URLSearchParams();
+    if (_guardrailsActionFilter) qs.set('action', _guardrailsActionFilter);
+    const url = '/api/guardrails' + (qs.toString() ? '?' + qs.toString() : '');
+    _guardrailsData = await api(url, {cache:'no-store', timeoutMs:15000});
+  } catch (e) {
+    _guardrailsData = {available:false, reason:(e && e.message) ? e.message : String(e)};
+  }
+  _renderGuardrailsDetail();
+}
+
+function _guardrailsChip(label, value) {
+  return `<span class="cognitive-chip"><strong>${esc(value)}</strong> ${esc(label)}</span>`;
+}
+
+function _guardrailsEntryHtml(e) {
+  const id = esc(e.id || '');
+  const ts = e.timestamp ? new Date(e.timestamp * 1000).toLocaleString() : '';
+  const sev = esc(e.severity || 'info');
+  const action = esc(e.action || 'scanned');
+  const actionClass = action === 'blocked' ? 'cognitive-badge-pinned'
+    : action === 'warned' ? '' : 'cognitive-badge-hard';
+  const sevClass = sev === 'high' ? 'cognitive-badge-pinned'
+    : sev === 'medium' ? '' : 'cognitive-badge-hard';
+  const findings = Array.isArray(e.findings) ? e.findings : [];
+  const findingsHtml = findings.length
+    ? findings.map(f => `<div class="guardrails-finding"><span class="cognitive-badge ${f.severity === 'high' ? 'cognitive-badge-pinned' : ''}" style="${f.severity === 'medium' ? 'background:#8a6d3b;color:#fff' : ''}">${esc(f.kind)}</span> <code>${esc(f.value || '')}</code></div>`).join('')
+    : '';
+  const msg = e.message ? `<div class="guardrails-msg">${esc(e.message).slice(0, 300)}</div>` : '';
+  return `<section class="cognitive-card">
+    <div class="cognitive-card-head">
+      <strong>${esc(e.tool_name || 'unknown')}</strong>
+      <span class="cognitive-badge ${actionClass}">${action.toUpperCase()}</span>
+      <span class="cognitive-badge ${sevClass}" style="${sev === 'medium' ? 'background:#8a6d3b;color:#fff' : ''}">${sev.toUpperCase()}</span>
+      <span class="cognitive-meta">${ts}</span>
+    </div>
+    ${findingsHtml}
+    ${msg}
+  </section>`;
+}
+
+function _renderGuardrailsDetail() {
+  const title = $('memoryDetailTitle');
+  const body = $('memoryDetailBody');
+  const empty = $('memoryDetailEmpty');
+  if (!title || !body) return;
+  title.textContent = 'Guardrails';
+  const data = _guardrailsData;
+  if (!data) {
+    body.innerHTML = '<div class="main-view-content"><div class="memory-empty">Loading…</div></div>';
+    body.style.display = '';
+    if (empty) empty.style.display = 'none';
+    _memoryMode = 'read';
+    _setMemoryHeaderButtons('read');
+    return;
+  }
+  if (data.available === false) {
+    body.innerHTML = `<div class="main-view-content"><div class="memory-empty">${esc(data.reason || 'Guardrails store unavailable.')}</div></div>`;
+    body.style.display = '';
+    if (empty) empty.style.display = 'none';
+    _memoryMode = 'read';
+    _setMemoryHeaderButtons('read');
+    return;
+  }
+  const stats = data.stats || {};
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const chips = [
+    _guardrailsChip('total', stats.total || entries.length),
+    _guardrailsChip('blocked', stats.blocked || 0),
+    _guardrailsChip('warned', stats.warned || 0),
+    _guardrailsChip('scanned', stats.scanned || 0),
+  ].join('');
+  const filtered = entries.filter(e => {
+    if (_guardrailsQuery) {
+      const q = _guardrailsQuery.toLowerCase();
+      if (!(e.tool_name || '').toLowerCase().includes(q) &&
+          !(e.message || '').toLowerCase().includes(q) &&
+          !(e.action || '').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+  const listHtml = filtered.length
+    ? filtered.map(_guardrailsEntryHtml).join('')
+    : `<div class="memory-empty">${entries.length ? 'No entries match the current filter.' : 'No guardrails activity yet. Scans and blocks will appear here.'}</div>`;
+  const filterOpts = ['', 'blocked', 'warned', 'allowed', 'scanned']
+    .map(v => `<option value="${v}" ${_guardrailsActionFilter === v ? 'selected' : ''}>${v === '' ? 'All actions' : v}</option>`).join('');
+  body.innerHTML = `<div class="main-view-content">
+    <div class="cognitive-controls">
+      <input id="guardrailsSearch" type="search" placeholder="Filter entries…" value="${esc(_guardrailsQuery)}" oninput="guardrailsSetQuery(this.value)" />
+      <select onchange="guardrailsSetAction(this.value)" style="padding:6px 10px;border-radius:8px;background:#1e293b;color:#e2e8f0;border:1px solid #334155">${filterOpts}</select>
+      <button type="button" class="btn-secondary" onclick="_loadGuardrailsData(true)">Refresh</button>
+      <button type="button" class="btn-secondary" style="color:#f87171" onclick="guardrailsClearLog()">Clear log</button>
+    </div>
+    <div class="cognitive-stats">${chips}</div>
+    ${listHtml}
+  </div>`;
+  body.style.display = '';
+  if (empty) empty.style.display = 'none';
+  _memoryMode = 'read';
+  _setMemoryHeaderButtons('read');
+}
+
+function guardrailsSetQuery(q) {
+  _guardrailsQuery = q;
+  _renderGuardrailsDetail();
+}
+
+function guardrailsSetAction(a) {
+  _guardrailsActionFilter = a;
+  _loadGuardrailsData(true);
+}
+
+async function guardrailsClearLog() {
+  if (!confirm('Clear the entire guardrails audit log? This cannot be undone.')) return;
+  try {
+    const res = await api('/api/guardrails', {method:'POST', body:{action:'clear'}});
+    if (res && res.ok) {
+      await _loadGuardrailsData(true);
+    } else {
+      alert((res && res.reason) ? res.reason : 'Clear failed.');
+    }
+  } catch (e) {
+    alert((e && e.message) ? e.message : String(e));
+  }
 }
 
 async function loadNotesSources(force) {
