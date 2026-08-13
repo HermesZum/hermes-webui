@@ -242,8 +242,9 @@ def _read_prune_log(home: Path, limit: int = 30) -> List[str]:
 def _builtin_memory_usage_pct(home: Path) -> float:
     memory_path = home / "memories" / "MEMORY.md"
     user_path = home / "memories" / "USER.md"
-    memory_limit = 2200
-    user_limit = 1375
+    # Defaults from config.yaml (not plugin defaults)
+    memory_limit = 3500
+    user_limit = 1750
     try:
         from api.config import get_config_snapshot
         cfg = get_config_snapshot()
@@ -390,14 +391,14 @@ def _handle_sync_action(handler, body, store, home: Path, apply: bool) -> None:
     hermes_home = _resolve_hermes_home()
     sync = sync_module.BuiltinMemorySync(hermes_home, store, params, {})
 
-    limits = {"memory": 2200, "user": 1375}
+    limits = {"memory": 3500, "user": 1750}
     try:
         from api.config import get_config_snapshot
         cfg = get_config_snapshot()
         mem_cfg = cfg.get("memory") if isinstance(cfg, dict) else {}
         if isinstance(mem_cfg, dict):
-            limits["memory"] = int(mem_cfg.get("memory_char_limit", 2200))
-            limits["user"] = int(mem_cfg.get("user_char_limit", 1375))
+            limits["memory"] = int(mem_cfg.get("memory_char_limit", 3500))
+            limits["user"] = int(mem_cfg.get("user_char_limit", 1750))
     except Exception:
         pass
 
