@@ -24143,7 +24143,11 @@ def _handle_workspace_add(handler, body):
     wss = load_workspaces()
     if any(w["path"] == str(p) for w in wss):
         return bad(handler, "Workspace already in list")
-    wss.append({"path": str(p), "name": name or p.name})
+    final_name = name or p.name
+    existing_names = [str(w.get("name", "") or w.get("path", "")) for w in wss]
+    if final_name.lower() in [n.lower() for n in existing_names]:
+        return bad(handler, f"A workspace named '{final_name}' already exists")
+    wss.append({"path": str(p), "name": final_name})
     save_workspaces(wss)
     return j(handler, {"ok": True, "workspaces": wss})
 
