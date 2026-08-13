@@ -197,7 +197,7 @@ def _row_to_payload(decay_module, row: Dict[str, Any], params, now: float) -> Di
     }
 
 
-def _stats(store, decay_module, params, now: float) -> Dict[str, Any]:
+def _stats(store, decay_module, params, now: float, home: Path) -> Dict[str, Any]:
     rows = store.get_all_raw()
     total = len(rows)
     pinned = sum(1 for r in rows if r.get("pinned"))
@@ -224,6 +224,7 @@ def _stats(store, decay_module, params, now: float) -> Dict[str, Any]:
         "prunable": prunable,
         "by_origin": by_origin,
         "by_temporal": by_temporal,
+        "usage_pct": _builtin_memory_usage_pct(home),
     }
 
 
@@ -236,6 +237,37 @@ def _read_prune_log(home: Path, limit: int = 30) -> List[str]:
     except OSError:
         return []
     return lines[-limit:]
+
+
+def _builtin_memory_usage_pct(home: Path) -> float:
+    memory_path = home / "memories" / "MEMORY.md"
+    user_path = home / "memories" / "USER.md"
+    memory_limit = 2200
+    user_limit = 1375
+    try:
+        from api.config import get_config_snapshot
+        cfg = get_config_snapshot()
+        mem_cfg = cfg.get("memory") if isinstance(cfg, dict) else {}
+        if isinstance(mem_cfg, dict):
+            memory_limit = int(mem_cfg.get("memory_char_limit", memory_limit))
+            user_limit = int(mem_cfg.get("user_char_limit", user_limit))
+    except Exception:
+        pass
+    total_used = 0
+    total_limit = memory_limit + user_limit
+    try:
+        if memory_path.exists():
+            total_used += len(memory_path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        pass
+    try:
+        if user_path.exists():
+            total_used += len(user_path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        pass
+    if total_limit <= 0:
+        return 0.0
+    return round((total_used / total_limit) * 100, 1)
 
 
 # ── HTTP handlers ─────────────────────────────────────────────────────────────
@@ -262,7 +294,7 @@ def handle_cognitive_get(handler, parsed=None) -> None:
             "available": True,
             "db_path": str(_db_path(home)),
             "memories": payload,
-            "stats": _stats(store, decay_module, params, now),
+            "stats": _stats(store, decay_module, params, now, home),
             "prune_log": _read_prune_log(home),
         },
     )

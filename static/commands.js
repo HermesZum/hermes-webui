@@ -14,6 +14,7 @@ const COMMANDS=[
   {name:'terminal',  desc:t('cmd_terminal'),             fn:cmdTerminal,                        noEcho:true},
   {name:'new',       desc:t('cmd_new'),            fn:cmdNew,       noEcho:true},
   {name:'usage',     desc:t('cmd_usage'),   fn:cmdUsage,     noEcho:true},
+  {name:'memory-sync', desc:t('cmd_memory_sync'), fn:cmdMemorySync, noEcho:true},
   {name:'theme',     desc:t('cmd_theme'), fn:cmdTheme, arg:'name',  noEcho:true},
   {name:'personality', desc:t('cmd_personality'), fn:cmdPersonality, arg:'name', subArgs:'personalities'},
   {name:'skills',    desc:t('cmd_skills'),   fn:cmdSkills,   arg:'query'},
@@ -1047,6 +1048,29 @@ async function cmdUsage(){
   if(cb) cb.checked=next;
   renderMessages();
   showToast(next?t('token_usage_on'):t('token_usage_off'));
+}
+
+async function cmdMemorySync(){
+  showToast(t('memory_sync_started'));
+  try{
+    const res = await api('/api/memory/cognitive', {method:'POST', body:JSON.stringify({action:'sync_apply', target:'both'})});
+    if(!res || !res.ok){
+      showToast(t('memory_sync_failed') + ': ' + ((res && res.error) ? res.error : 'unknown error'));
+      return;
+    }
+    const total = (res.results || []).reduce((acc, r) => {
+      const c = (r.plan || {}).counts || {};
+      return acc + (c.compact || 0) + (c.remove || 0);
+    }, 0);
+    if(!total){
+      showToast(t('memory_sync_nothing'));
+      return;
+    }
+    showToast(t('memory_sync_applied') + ' ' + total + ' entry/entries.');
+    if(typeof _loadCognitiveData === 'function') _loadCognitiveData(true);
+  }catch(e){
+    showToast(t('memory_sync_failed') + ': ' + ((e && e.message) ? e.message : String(e)));
+  }
 }
 
 async function cmdTheme(args){

@@ -5478,6 +5478,10 @@ async function _loadCognitiveData(force) {
     _cognitiveData = {available:false, reason:(e && e.message) ? e.message : String(e)};
   }
   _renderCognitiveMemoryDetail();
+  if (typeof _syncMemoryIndicator === 'function') {
+    const stats = (_cognitiveData && _cognitiveData.stats) || {};
+    _syncMemoryIndicator(stats);
+  }
 }
 
 function _renderCognitiveMemoryDetail() {
