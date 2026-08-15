@@ -14052,6 +14052,22 @@ async function _restoreCheckpoint(workspace,checkpoint,message){
 }
 
 
+async function _refreshMemoryIndicator(){
+  try {
+    const data = await api('/api/memory/cognitive', {cache:'no-store', timeoutMs:15000});
+    _cognitiveData = data;
+    if (typeof _syncMemoryIndicator === 'function') {
+      const stats = (data && data.stats) || {};
+      _syncMemoryIndicator(stats);
+    }
+  } catch (_) {
+    // best-effort refresh; keep existing composer state on failure
+  }
+}
+
+if(typeof window!=='undefined'){
+  window._refreshMemoryIndicator = _refreshMemoryIndicator;
+}
 function updateNotificationPermissionStatus(){
   const el=$('notificationPermissionStatus');
   const btn=$('notificationPermissionButton');
