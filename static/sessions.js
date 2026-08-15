@@ -3219,7 +3219,6 @@ async function _ensureMessagesLoaded(sid, opts) {
       _setSessionViewedCount(sid, Number(S.session.message_count || msgs.length));
     }
     if(typeof syncTopbar==='function') syncTopbar();
-    if(typeof _refreshMemoryIndicator==='function'){try{void _refreshMemoryIndicator();}catch(_){}}
   }
 }
 

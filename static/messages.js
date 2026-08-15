@@ -6269,9 +6269,6 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
           liveDisplayText:typeof _streamDisplay==='function'?_streamDisplay():assistantText,
         });
         sendBrowserNotification('Response complete',_completionPreview||'Task finished',{forceHidden:_wasEverBackgrounded,sid:activeSid});
-        if (typeof _refreshMemoryIndicator === 'function') {
-          try { void _refreshMemoryIndicator(); } catch (_) {}
-        }
       };
       if(_shouldUseLiveProseFade()&&assistantBody){
         _cancelAnimationFramePendingStreamRender();

@@ -5540,6 +5540,8 @@ function _renderCognitiveMemoryDetail() {
       <input id="cognitiveSearch" type="search" placeholder="Filter memories…" value="${esc(_cognitiveQuery)}" oninput="cognitiveSetQuery(this.value)" />
       <select id="cognitiveFilter" onchange="cognitiveSetFilter(this.value)" aria-label="Filter">
         <option value="all" ${_cognitiveFilter==='all'?'selected':''}>All</option>
+        <option value="memory" ${_cognitiveFilter==='memory'?'selected':''}>Agent Memory</option>
+        <option value="user" ${_cognitiveFilter==='user'?'selected':''}>User Profile</option>
         <option value="pinned" ${_cognitiveFilter==='pinned'?'selected':''}>Pinned</option>
         <option value="research" ${_cognitiveFilter==='research'?'selected':''}>Research findings</option>
         <option value="hard" ${_cognitiveFilter==='hard'?'selected':''}>Hard to find</option>
@@ -5569,11 +5571,13 @@ function _cognitiveCardHtml(m) {
   const id = esc(m.id || '');
   const pinned = m.pinned ? '<span class="cognitive-badge cognitive-badge-pinned">PINNED</span>' : '';
   const htf = m.hard_to_find ? '<span class="cognitive-badge cognitive-badge-hard">HARD TO FIND</span>' : '';
+  const target = (m.target === 'user') ? '<span class="cognitive-badge cognitive-badge-user">USER PROFILE</span>' : '<span class="cognitive-badge cognitive-badge-memory">AGENT MEMORY</span>';
   const eff = (typeof m.effective_importance === 'number') ? m.effective_importance : (m.importance || 0);
   const pct = Math.max(0, Math.min(100, Math.round(eff * 100)));
   const content = (m.content || '').length > 600 ? esc((m.content || '').slice(0, 600)) + '…' : esc(m.content || '');
   return `<section class="cognitive-card${m.pinned ? ' cognitive-card-pinned' : ''}">
     <div class="cognitive-card-head">
+      ${target}
       <span class="detail-badge">${esc(m.origin || 'unknown')}</span>
       ${pinned}${htf}
       <span class="cognitive-meta">${esc(m.temporal || 'stable')} · rel ${esc(m.reliability)} · ${esc(m.access_count)} accesses · ${esc(_cognitiveAge(m.last_access))} ago</span>

@@ -224,7 +224,7 @@ def _stats(store, decay_module, params, now: float, home: Path) -> Dict[str, Any
         "prunable": prunable,
         "by_origin": by_origin,
         "by_temporal": by_temporal,
-        "usage_pct": _builtin_memory_usage_pct(home),
+        "usage_pct": _db_usage_pct(store),
     }
 
 
@@ -240,35 +240,23 @@ def _read_prune_log(home: Path, limit: int = 30) -> List[str]:
 
 
 def _builtin_memory_usage_pct(home: Path) -> float:
-    memory_path = home / "memories" / "MEMORY.md"
-    user_path = home / "memories" / "USER.md"
-    # Defaults from config.yaml (not plugin defaults)
-    memory_limit = 3500
-    user_limit = 1750
-    try:
-        from api.config import get_config_snapshot
-        cfg = get_config_snapshot()
-        mem_cfg = cfg.get("memory") if isinstance(cfg, dict) else {}
-        if isinstance(mem_cfg, dict):
-            memory_limit = int(mem_cfg.get("memory_char_limit", memory_limit))
-            user_limit = int(mem_cfg.get("user_char_limit", user_limit))
-    except Exception:
-        pass
-    total_used = 0
-    total_limit = memory_limit + user_limit
-    try:
-        if memory_path.exists():
-            total_used += len(memory_path.read_text(encoding="utf-8", errors="replace"))
-    except OSError:
-        pass
-    try:
-        if user_path.exists():
-            total_used += len(user_path.read_text(encoding="utf-8", errors="replace"))
-    except OSError:
-        pass
-    if total_limit <= 0:
+    # Markdown files are now minimal stubs managed by the cognitive plugin.
+    # Report 0 here because the real usage metric is the DB entry count.
+    return 0.0
+
+
+def _db_usage_pct(store) -> float:
+    """Return cognitive DB usage as a percentage of a soft entry limit."""
+    if not store:
         return 0.0
-    return round((total_used / total_limit) * 100, 1)
+    try:
+        total = store.count()
+    except Exception:
+        return 0.0
+    limit = 100
+    if total <= 0 or limit <= 0:
+        return 0.0
+    return round((total / limit) * 100, 1)
 
 
 # ── HTTP handlers ─────────────────────────────────────────────────────────────
