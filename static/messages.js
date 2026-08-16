@@ -5469,6 +5469,12 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
   let _cachedParsed=null;
   let _cachedParsedText='';
   let _cachedParsedReasoning='';
+  // Shared flag (also set from boot.js on the composer 'input' event): true
+  // while the user is actively typing in the composer. The render loop defers
+  // streamed-output repaints while this is set so keystrokes aren't starved by
+  // 50-150ms DOM writes on large sessions. Reset on blur/Enter from boot.js.
+  let _userTyping=false;
+
   function _scheduleRender(parsed){
     // If caller provides a pre-computed parse result, cache it for _doRender.
     if(parsed){
@@ -5493,6 +5499,13 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       _renderPending=false;
       // Guard: a pending setTimeout+rAF can outlive stream finalization.
       if(_streamFinalized) return;
+      // Input-jank guard: if the user is actively typing in the composer, defer
+      // this streamed-output repaint. The render pileup documented above
+      // (50-150ms DOM writes that block the main thread on large sessions) was
+      // starving keystrokes during active turns. Skipping render while the user
+      // is composing lets their input get through first; the next idle/normal
+      // tick re-syncs the visible output. (_userTyping is reset on blur/Enter.)
+      if(_userTyping && document.activeElement===($('msg')||null)) return;
       // Mobile scroll-jank guard: temporarily disable overflow-anchor before DOM
       // writes to suppress Chromium scroll re-anchoring during streaming growth.
       if(typeof window._fixMobileScrollJank==='function') window._fixMobileScrollJank();
@@ -5539,11 +5552,19 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       _throttledSnapshotLiveTurn();
     };
     const frameIntervalMs=_shouldUseLiveProseFade()?33:66;
-    if(sinceLastMs>=frameIntervalMs){
-      _pendingRafHandle=requestAnimationFrame(_doRender);
-    } else {
-      _pendingRafHandle=setTimeout(()=>requestAnimationFrame(_doRender), frameIntervalMs-sinceLastMs);
-    }
+    // Schedule on idle when available: yields to input/UI events so keystrokes
+    // and the 1-2s poll timers never wait behind a 50-150ms streamed-output
+    // repaint. Falls back to rAF/setTimeout on browsers without
+    // requestIdleCallback (older Safari). The render still happens, just never
+    // pre-empts user input.
+    const _scheduleViaIdle=(cb)=>{
+      if(typeof window.requestIdleCallback==='function'){
+        return window.requestIdleCallback(cb,{timeout:frameIntervalMs});
+      }
+      if(sinceLastMs>=frameIntervalMs){ return requestAnimationFrame(cb); }
+      return setTimeout(()=>requestAnimationFrame(cb), frameIntervalMs-sinceLastMs);
+    };
+    _pendingRafHandle=_scheduleViaIdle(()=>{ requestAnimationFrame(_doRender); });
   }
 
   function _completeAutomaticCompressionOnLiveProgress(sessionId){
