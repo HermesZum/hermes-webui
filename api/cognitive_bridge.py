@@ -188,6 +188,7 @@ def _row_to_payload(decay_module, row: Dict[str, Any], params, now: float) -> Di
         "reliability": round(float(row.get("reliability", 1.0)), 4),
         "hard_to_find": bool(row.get("hard_to_find")),
         "pinned": bool(row.get("pinned")),
+        "critical": bool(row.get("critical")),
         "temporal": row.get("temporal", "stable"),
         "superseded": bool(row.get("superseded")),
         "supersedes": row.get("supersedes"),

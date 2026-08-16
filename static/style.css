@@ -7327,6 +7327,7 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 .cognitive-chip strong{font-size:13px;color:var(--text)}
 .cognitive-card{border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--bg)}
 .cognitive-card-pinned{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent-bg, rgba(184,134,11,0.12))}
+.cognitive-card-critical{border-color:var(--error);box-shadow:0 0 0 1px rgba(239,83,80,0.18)}
 .cognitive-card-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:6px}
 .cognitive-meta{font-size:11px;color:var(--muted);margin-left:auto}
 .cognitive-actions{display:inline-flex;gap:6px}
@@ -7340,6 +7341,7 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 .cognitive-content{font-size:13px;white-space:pre-wrap;word-break:break-word}
 .cognitive-badge{font-size:10px;font-weight:600;letter-spacing:.04em;padding:2px 7px;border-radius:999px;text-transform:uppercase}
 .cognitive-badge-pinned{background:var(--accent-bg, rgba(184,134,11,0.12));color:var(--accent)}
+.cognitive-badge-critical{background:rgba(239,83,80,0.15);color:var(--error)}
 .cognitive-badge-hard{background:rgba(128,128,128,.15);color:var(--muted)}
 .cognitive-badge-memory{background:rgba(56,132,244,.12);color:#1a73e8}
 .cognitive-badge-user{background:rgba(40,180,120,.12);color:#1e8449}

@@ -5519,6 +5519,7 @@ function _renderCognitiveMemoryDetail() {
   ].join('');
   const filtered = memories.filter(m => {
     if (_cognitiveFilter === 'pinned' && !m.pinned) return false;
+    if (_cognitiveFilter === 'critical' && !m.critical) return false;
     if (_cognitiveFilter === 'research' && m.origin !== 'research_finding') return false;
     if (_cognitiveFilter === 'hard' && !m.hard_to_find) return false;
     if (_cognitiveFilter === 'timeless' && m.temporal !== 'timeless') return false;
@@ -5543,6 +5544,7 @@ function _renderCognitiveMemoryDetail() {
         <option value="memory" ${_cognitiveFilter==='memory'?'selected':''}>Agent Memory</option>
         <option value="user" ${_cognitiveFilter==='user'?'selected':''}>User Profile</option>
         <option value="pinned" ${_cognitiveFilter==='pinned'?'selected':''}>Pinned</option>
+        <option value="critical" ${_cognitiveFilter==='critical'?'selected':''}>Critical (safety)</option>
         <option value="research" ${_cognitiveFilter==='research'?'selected':''}>Research findings</option>
         <option value="hard" ${_cognitiveFilter==='hard'?'selected':''}>Hard to find</option>
         <option value="timeless" ${_cognitiveFilter==='timeless'?'selected':''}>Timeless</option>
@@ -5570,16 +5572,17 @@ function _renderCognitiveMemoryDetail() {
 function _cognitiveCardHtml(m) {
   const id = esc(m.id || '');
   const pinned = m.pinned ? '<span class="cognitive-badge cognitive-badge-pinned">PINNED</span>' : '';
+  const critical = m.critical ? '<span class="cognitive-badge cognitive-badge-critical">CRITICAL</span>' : '';
   const htf = m.hard_to_find ? '<span class="cognitive-badge cognitive-badge-hard">HARD TO FIND</span>' : '';
   const target = (m.target === 'user') ? '<span class="cognitive-badge cognitive-badge-user">USER PROFILE</span>' : '<span class="cognitive-badge cognitive-badge-memory">AGENT MEMORY</span>';
   const eff = (typeof m.effective_importance === 'number') ? m.effective_importance : (m.importance || 0);
   const pct = Math.max(0, Math.min(100, Math.round(eff * 100)));
   const content = (m.content || '').length > 600 ? esc((m.content || '').slice(0, 600)) + '…' : esc(m.content || '');
-  return `<section class="cognitive-card${m.pinned ? ' cognitive-card-pinned' : ''}">
+  return `<section class="cognitive-card${m.pinned ? ' cognitive-card-pinned' : ''}${m.critical ? ' cognitive-card-critical' : ''}">
     <div class="cognitive-card-head">
       ${target}
       <span class="detail-badge">${esc(m.origin || 'unknown')}</span>
-      ${pinned}${htf}
+      ${pinned}${critical}${htf}
       <span class="cognitive-meta">${esc(m.temporal || 'stable')} · rel ${esc(m.reliability)} · ${esc(m.access_count)} accesses · ${esc(_cognitiveAge(m.last_access))} ago</span>
       <span class="cognitive-actions">
         <button type="button" class="btn-secondary cognitive-btn" onclick="cognitiveAction('${m.pinned ? 'unpin' : 'pin'}','${id}')">${m.pinned ? 'Unpin' : 'Pin'}</button>
