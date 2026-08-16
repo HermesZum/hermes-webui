@@ -204,6 +204,7 @@ def _stats(store, decay_module, params, now: float, home: Path) -> Dict[str, Any
     pinned = sum(1 for r in rows if r.get("pinned"))
     hard = sum(1 for r in rows if r.get("hard_to_find"))
     superseded = sum(1 for r in rows if r.get("superseded"))
+    critical = sum(1 for r in rows if r.get("critical"))
     by_origin: Dict[str, int] = {}
     by_temporal: Dict[str, int] = {}
     prunable = 0
@@ -222,6 +223,7 @@ def _stats(store, decay_module, params, now: float, home: Path) -> Dict[str, Any
         "pinned": pinned,
         "hard_to_find": hard,
         "superseded": superseded,
+        "critical": critical,
         "prunable": prunable,
         "by_origin": by_origin,
         "by_temporal": by_temporal,

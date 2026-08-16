@@ -6777,10 +6777,13 @@ function _syncMemoryIndicator(stats){
   }
   wrap.style.display='';
   const pct=Math.min(100, Math.max(0, Math.round(stats.usage_pct)));
-  el.textContent = pct + '%';
+  const crit=typeof stats.critical==='number' ? stats.critical : 0;
+  el.textContent = crit > 0 ? `${pct}% ⚠${crit}` : `${pct}%`;
   el.classList.remove('memory-mid','memory-high');
-  if(pct > 90) el.classList.add('memory-high');
+  if(crit > 0) el.classList.add('memory-critical');
+  else if(pct > 90) el.classList.add('memory-high');
   else if(pct > 75) el.classList.add('memory-mid');
+  wrap.title = `Cognitive memory: ${pct}% of entry limit · ${crit} critical safety rule(s)`;
 }
 function _isMessagePaneNearBottom(threshold=250){
   const el=$('messages');

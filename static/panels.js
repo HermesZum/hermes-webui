@@ -5513,6 +5513,7 @@ function _renderCognitiveMemoryDetail() {
   const chips = [
     chip('total', stats.total || 0),
     chip('pinned', stats.pinned || 0),
+    chip('critical', stats.critical || 0),
     chip('hard to find', stats.hard_to_find || 0),
     chip('prunable', stats.prunable || 0),
     chip('superseded', stats.superseded || 0),
