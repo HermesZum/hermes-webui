@@ -23,14 +23,26 @@ def _extract_function(src: str, name: str) -> str:
     raise AssertionError(f"Could not extract {name}")
 
 
-def test_messages_scroller_disables_browser_scroll_anchoring_on_desktop():
-    # Desktop (mouse): overflow-anchor:none — tool/card inserts cannot yank
-    # the transcript while the user reads earlier content.
-    assert "@media (hover:hover) and (pointer:fine){.messages{overflow-anchor:none;}}" in STYLE_CSS, (
-        "On desktop (mouse-driven devices) #messages must disable browser scroll "
-        "anchoring so tool/card inserts cannot yank the transcript. "
-        "On mobile (touch devices) overflow-anchor:auto is used instead to prevent "
-        "scrollTop=0 jank during innerHTML rebuild (#MOBILESCROLL)."
+def test_messages_scroller_keeps_browser_scroll_anchoring_on_desktop():
+    # Desktop (mouse): overflow-anchor:auto — the browser's native scroll
+    # anchoring keeps the reader's eye on the same message across the per-frame
+    # transcript rebuild (inner.innerHTML=''). The old corrective media query
+    # that forced overflow-anchor:none on fine-pointer devices is gone; it left
+    # the fragile JS snapshot-restore to hold position alone, and that snapshot's
+    # scrollTop is captured BEFORE the wipe and gets clamped when scrollHeight
+    # collapses, so an unpinned reader drifted toward the top on every streamed
+    # token (#1360 "scrolls up to the command header" bug). Mobile never had this
+    # problem because it kept overflow-anchor:auto. The JS restore still
+    # cooperates by suppressing native anchoring only for the duration of its own
+    # scrollTop write, so enabling it on desktop matches the mobile path.
+    assert ".messages{overflow-anchor:none;}" not in STYLE_CSS, (
+        "Desktop must NOT set overflow-anchor:none on #messages; native "
+        "overflow-anchor keeps a scrolled-up reader stable across the per-frame "
+        "innerHTML rebuild instead of drifting to the top (#1360)."
+    )
+    assert ".messages{" in STYLE_CSS and "overflow-anchor:auto;}" in STYLE_CSS, (
+        "On desktop #messages must default to overflow-anchor:auto so the browser "
+        "holds the reader's viewport across streaming DOM rebuilds."
     )
 
 
