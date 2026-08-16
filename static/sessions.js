@@ -3219,6 +3219,7 @@ async function _ensureMessagesLoaded(sid, opts) {
       _setSessionViewedCount(sid, Number(S.session.message_count || msgs.length));
     }
     if(typeof syncTopbar==='function') syncTopbar();
+    if(typeof _refreshMemoryIndicator==='function'){try{void _refreshMemoryIndicator();}catch(_){}}
   }
 }
 
@@ -3789,9 +3790,6 @@ async function _loadOlderMessages() {
     _messagesTruncated = !!responseSession._messages_truncated;
     _oldestIdx = responseSession._messages_offset || 0;
     renderMessages({ preserveScroll: true });
-    if (typeof window._refreshMemoryIndicator === 'function') {
-      window._refreshMemoryIndicator();
-    }
     if (container) {
       // Prepending older messages must not teleport the reader. Anchor to the
       // first visible rendered row and restore that row's top offset after the
