@@ -9186,14 +9186,24 @@ function _appearancePayloadFromUi(){
       ? chatActivityModeSel.value
       : 'compact_worklog',
     transparent_stream_event_timestamps: transparentEventTimestamps ? transparentEventTimestamps.checked : true,
-    session_jump_buttons: !!($('settingsSessionJumpButtons')||{}).checked,
-    session_endless_scroll: !!($('settingsSessionEndlessScroll')||{}).checked,
-    auto_scroll_follow: (typeof _autoScrollFollowPending==='boolean')
-      ? _autoScrollFollowPending
+    session_jump_buttons: (typeof _appearancePending==='object'&&'session_jump_buttons' in _appearancePending)
+      ? !!_appearancePending.session_jump_buttons
+      : !!($('settingsSessionJumpButtons')||{}).checked,
+    session_endless_scroll: (typeof _appearancePending==='object'&&'session_endless_scroll' in _appearancePending)
+      ? !!_appearancePending.session_endless_scroll
+      : !!($('settingsSessionEndlessScroll')||{}).checked,
+    auto_scroll_follow: (typeof _appearancePending==='object'&&'auto_scroll_follow' in _appearancePending)
+      ? !!_appearancePending.auto_scroll_follow
       : !!($('settingsAutoScrollFollow')||{}).checked,
-    render_user_markdown: !!($('settingsRenderUserMarkdown')||{}).checked,
-    large_text_paste_as_attachment: !!($('settingsLargeTextPasteAsAttachment')||{}).checked,
-    project_quick_create_buttons: !!($('settingsProjectQuickCreate')||{}).checked,
+    render_user_markdown: (typeof _appearancePending==='object'&&'render_user_markdown' in _appearancePending)
+      ? !!_appearancePending.render_user_markdown
+      : !!($('settingsRenderUserMarkdown')||{}).checked,
+    large_text_paste_as_attachment: (typeof _appearancePending==='object'&&'large_text_paste_as_attachment' in _appearancePending)
+      ? !!_appearancePending.large_text_paste_as_attachment
+      : !!($('settingsLargeTextPasteAsAttachment')||{}).checked,
+    project_quick_create_buttons: (typeof _appearancePending==='object'&&'project_quick_create_buttons' in _appearancePending)
+      ? !!_appearancePending.project_quick_create_buttons
+      : !!($('settingsProjectQuickCreate')||{}).checked,
     ..._structuredCodeViewFromUi(),
     show_titlebar_profile: !!($('settingsShowTitlebarProfile')||{}).checked,
     worklog_details_expanded_default: worklogDetailsExpanded,
@@ -9308,12 +9318,11 @@ async function _autosaveAppearanceSettings(payload){
     }
     window._sessionEndlessScrollEnabled=!!(saved&&saved.session_endless_scroll);
     window._autoScrollFollow=!saved||saved.auto_scroll_follow!==false;
-    // #1360-follow-up: the pending intent has now been persisted (and echoed by
-    // the server), so clear the capture. Until the next toggle, payload builders
-    // fall back to reading the live checkbox again — keeping them correct for any
-    // re-apply / sub-panel reload that happens after the save settles.
-    if(typeof _autoScrollFollowPending!=='undefined') _autoScrollFollowPending=null;
-    else window._autoScrollFollowPending=null;
+    // #1360-follow-up: the pending intents have now been persisted (and echoed
+    // by the server), so clear them. Until the next toggle, payload builders
+    // fall back to reading the live checkbox again — keeping them correct for
+    // any re-apply / sub-panel reload that happens after the save settles.
+    if(typeof _appearancePending==='object') _appearancePending={};
     // #6819: persist ONLY from an explicit boolean in the server response.
     // A failed autosave (`saved` falsy) or a partial response without the key
     // would otherwise write the synthesized default (ON) into the mirror,
@@ -9748,12 +9757,22 @@ function _syncSettingsMaxTokensPlaceholder(field, fallbackValue){
     : 'No override';
 }
 
-// #1360-follow-up: captures the user's Auto-follow toggle intent at change time.
-// null = "no pending toggle, read the live checkbox". A boolean = "use this value
-// for the next autosave/explicit save" — protects the toggle from being clobbered
-// by loadSettingsPanel() re-applying the stale server value to the checkbox before
-// the debounced autosave fires (which previously persisted false on reload).
-let _autoScrollFollowPending=null;
+// #1360-follow-up (systemic): capture per-field appearance intent at change
+// time. null = no pending change; an object maps setting key -> intended value.
+// The debounced autosave (_appearancePayloadFromUi) and the explicit save
+// (saveSettings) prefer these captured values over the LIVE checkbox, because
+// loadSettingsPanel() re-applies the (stale, pre-save) server value to the DOM
+// on every settings-panel (re)load. Without this, toggling box A, then a panel
+// re-apply resetting A's DOM to false, then toggling box B, would make B's
+// debounced save snapshot A as false — overwriting A. Every appearance toggle
+// that has fired onchange since the last successful save lives here until the
+// save settles, so re-applies and later snapshots can never clobber it.
+let _appearancePending = {};
+
+function _markAppearanceChanged(key, value){
+  _appearancePending[key] = value;
+  _scheduleAppearanceAutosave();
+}
 
 async function loadSettingsPanel(){
   try{
@@ -9805,7 +9824,7 @@ async function loadSettingsPanel(){
       jumpButtonsCb.onchange=function(){
         window._sessionJumpButtonsEnabled=this.checked;
         if(typeof _applySessionNavigationPrefs==='function') _applySessionNavigationPrefs();
-        _scheduleAppearanceAutosave();
+        _markAppearanceChanged('session_jump_buttons', this.checked);
       };
     }
     if(typeof _applySessionNavigationPrefs==='function') _applySessionNavigationPrefs();
@@ -9831,7 +9850,7 @@ async function loadSettingsPanel(){
       window._sessionEndlessScrollEnabled=endlessScrollCb.checked;
       endlessScrollCb.onchange=function(){
         window._sessionEndlessScrollEnabled=this.checked;
-        _scheduleAppearanceAutosave();
+        _markAppearanceChanged('session_endless_scroll', this.checked);
       };
     }
     const autoScrollFollowCb=$('settingsAutoScrollFollow');
@@ -9848,18 +9867,11 @@ async function loadSettingsPanel(){
       }
       autoScrollFollowCb.onchange=function(){
         window._autoScrollFollow=this.checked;
-        // #1360-follow-up: capture the user's intent NOW, not when the debounced
-        // autosave (350ms later) reads the checkbox. loadSettingsPanel() re-applies
-        // settings.auto_scroll_follow from the (stale) server value to the checkbox
-        // on every panel (re)load; if that re-apply lands between the toggle and the
-        // pending autosave fire, the checkbox is reset to false and a false gets
-        // persisted — so a reload shows the box unchecked despite the user enabling
-        // it. Persisting the mirror immediately and routing the autosave/save through
-        // this captured value makes the toggle authoritative regardless of re-apply.
-        if(typeof _autoScrollFollowPending!=='undefined') _autoScrollFollowPending=this.checked;
-        else window._autoScrollFollowPending=this.checked;
+        // #1360-follow-up: capture intent per-field so a later panel re-apply
+        // (which resets the DOM checkbox from the stale server value) cannot
+        // clobber this toggle in a subsequent debounced save.
+        _markAppearanceChanged('auto_scroll_follow', this.checked);
         if(typeof _persistAutoScrollFollow==='function') _persistAutoScrollFollow(this.checked);
-        _scheduleAppearanceAutosave();
       };
     }
     const worklogDetailsExpandedCb=$('settingsWorklogDetailsExpandedDefault');
@@ -9886,7 +9898,7 @@ async function loadSettingsPanel(){
       worklogDetailsExpandedCb.onchange=function(){
         window._worklogDetailsExpandedByDefault=this.checked;
         if(typeof _applyWorklogDetailsExpandedDefault==='function') _applyWorklogDetailsExpandedDefault();
-        _scheduleAppearanceAutosave();
+        _markAppearanceChanged('worklog_details_expanded_default', this.checked);
       };
     }
     const renderUserMarkdownCb=$('settingsRenderUserMarkdown');
@@ -9897,7 +9909,7 @@ async function loadSettingsPanel(){
         window._renderUserMarkdown=this.checked;
         if(typeof clearMessageRenderCache==='function') clearMessageRenderCache();
         if(typeof renderMessages==='function') renderMessages();
-        _scheduleAppearanceAutosave();
+        _markAppearanceChanged('render_user_markdown', this.checked);
       };
     }
     const largeTextPasteCb=$('settingsLargeTextPasteAsAttachment');
@@ -9906,7 +9918,7 @@ async function loadSettingsPanel(){
       window._largeTextPasteAsAttachment=largeTextPasteCb.checked;
       largeTextPasteCb.onchange=function(){
         window._largeTextPasteAsAttachment=this.checked;
-        _scheduleAppearanceAutosave();
+        _markAppearanceChanged('large_text_paste_as_attachment', this.checked);
       };
     }
     const pqcCb=$('settingsProjectQuickCreate');
@@ -9918,7 +9930,7 @@ async function loadSettingsPanel(){
         // Rebuild the sidebar so the per-project + buttons appear/disappear
         // immediately, rather than only on the next render.
         try{ if(typeof renderSessionListFromCache==='function') renderSessionListFromCache(); }catch(_){}
-        _scheduleAppearanceAutosave();
+        _markAppearanceChanged('project_quick_create_buttons', this.checked);
       };
     }
     const structuredCodeModeSel=$('settingsStructuredCodeMode');
@@ -13396,19 +13408,29 @@ async function saveSettings(andClose){
   body.theme=theme;
   body.skin=skin;
   body.font_size=fontSize;
-  body.session_jump_buttons=!!($('settingsSessionJumpButtons')||{}).checked;
-  body.session_endless_scroll=!!($('settingsSessionEndlessScroll')||{}).checked;
+  body.session_jump_buttons=(typeof _appearancePending==='object'&&'session_jump_buttons' in _appearancePending)
+    ? !!_appearancePending.session_jump_buttons
+    : !!($('settingsSessionJumpButtons')||{}).checked;
+  body.session_endless_scroll=(typeof _appearancePending==='object'&&'session_endless_scroll' in _appearancePending)
+    ? !!_appearancePending.session_endless_scroll
+    : !!($('settingsSessionEndlessScroll')||{}).checked;
   body.chat_activity_display_mode=((($('settingsChatActivityDisplayMode')||{}).value==='transparent_stream')
     ||(($('settingsChatActivityDisplayMode')||{}).value==='hide_all_activity'))
     ? ($('settingsChatActivityDisplayMode')||{}).value
     : 'compact_worklog';
   body.transparent_stream_event_timestamps=(($('settingsTransparentEventTimestamps')||{}).checked)!==false;
-  body.auto_scroll_follow=(typeof _autoScrollFollowPending==='boolean')
-    ? _autoScrollFollowPending
+  body.auto_scroll_follow=(typeof _appearancePending==='object'&&'auto_scroll_follow' in _appearancePending)
+    ? !!_appearancePending.auto_scroll_follow
     : !!($('settingsAutoScrollFollow')||{}).checked;
-  body.render_user_markdown=!!($('settingsRenderUserMarkdown')||{}).checked;
-  body.large_text_paste_as_attachment=!!($('settingsLargeTextPasteAsAttachment')||{}).checked;
-  body.project_quick_create_buttons=!!($('settingsProjectQuickCreate')||{}).checked;
+  body.render_user_markdown=(typeof _appearancePending==='object'&&'render_user_markdown' in _appearancePending)
+    ? !!_appearancePending.render_user_markdown
+    : !!($('settingsRenderUserMarkdown')||{}).checked;
+  body.large_text_paste_as_attachment=(typeof _appearancePending==='object'&&'large_text_paste_as_attachment' in _appearancePending)
+    ? !!_appearancePending.large_text_paste_as_attachment
+    : !!($('settingsLargeTextPasteAsAttachment')||{}).checked;
+  body.project_quick_create_buttons=(typeof _appearancePending==='object'&&'project_quick_create_buttons' in _appearancePending)
+    ? !!_appearancePending.project_quick_create_buttons
+    : !!($('settingsProjectQuickCreate')||{}).checked;
   Object.assign(body,_structuredCodeViewFromUi());
   Object.assign(body,_composerControlVisibilityPayload());
   body.composer_control_order=_getComposerControlOrder();
@@ -13508,6 +13530,9 @@ async function saveSettings(andClose){
     _applySavedSettingsUi(saved, body, {sendKey,showTokenUsage,showQuotaChip,showConversationOutline,showBusyPlaceholderHint,showTps,fadeTextEffect,showCliSessions,theme,skin,language,sidebarDensity,fontSize});
     showToast(t('settings_saved'));
     _settingsDirty=false;
+    // #1360-follow-up: explicit Save persisted the pending intents; clear them
+    // so payload builders fall back to the live checkbox on the next edit.
+    if(typeof _appearancePending==='object') _appearancePending={};
     _resetSettingsPanelState();
     if(!andClose) _pendingSettingsTargetPanel = null;
     if(andClose) _hideSettingsPanel();

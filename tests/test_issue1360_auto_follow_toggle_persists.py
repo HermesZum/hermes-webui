@@ -1,20 +1,17 @@
-"""Regression coverage for #1360-follow-up — the Auto-follow toggle must
-survive a settings-panel re-apply (loadSettingsPanel re-writing the checkbox
-from the stale server value) that lands between the user's toggle and the
-debounced autosave fire.
+"""Regression coverage for #1360 — appearance checkboxes must persist across
+a settings-panel re-apply (loadSettingsPanel re-runs on every sub-section
+switch and resets the DOM checkboxes to the stale, pre-save server value).
 
-Root cause: `loadSettingsPanel()` set `autoScrollFollowCb.checked =
-settings.auto_scroll_follow !== false` on every (re)load. The user's toggle
-set `window._autoScrollFollow=this.checked` and scheduled a 350ms debounced
-autosave that READ THE CHECKBOX at fire time. If the panel re-loaded before
-the timer fired, the checkbox was reset to the stale server `false`, so the
-autosave persisted `false` — and a reload showed the box unchecked despite the
-user enabling it (`settings.json` ended up with `auto_scroll_follow: false`).
+Root cause: `_scheduleAppearanceAutosave` snapshotted the WHOLE DOM at schedule
+time. Toggle box A, then a panel re-apply resets A's DOM to false, then toggle
+box B -> B's debounced save snapshots A as false, overwriting A. After reload
+every checkbox the user touched came back unchecked.
 
-The fix captures the toggle intent into `_autoScrollFollowPending` at change
-time, persists the localStorage mirror immediately, routes both the debounced
-autosave (`_appearancePayloadFromUi`) and the explicit save (`saveSettings`)
-through that captured value, and clears the capture once the save settles.
+The fix captures PER-FIELD intent at each onchange into a module-scoped
+`_appearancePending` map; both the debounced autosave (`_appearancePayloadFromUi`)
+and the explicit save (`saveSettings`) prefer those captured values over the
+live checkbox. A re-apply that resets the DOM can no longer clobber an earlier
+toggle, because the save reads the captured intent, not the (reset) DOM.
 """
 
 import pathlib
@@ -26,85 +23,101 @@ def _read(rel):
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
-def test_capture_variable_declared():
+def test_appearance_pending_declared():
     src = _read("static/panels.js")
-    assert "let _autoScrollFollowPending=null;" in src, (
-        "a module-scoped capture variable must exist so the toggle intent "
-        "survives a checkbox re-apply before the debounced autosave fires"
+    assert "let _appearancePending = {};" in src, (
+        "module-scoped per-field intent map must exist so re-applies cannot clobber toggles"
     )
+    assert "function _markAppearanceChanged(" in src, "helper to record per-field intent must exist"
 
 
-def test_onchange_captures_intent_and_persists_mirror():
+def test_onchange_handlers_capture_per_field_intent():
     src = _read("static/panels.js")
-    assert "_autoScrollFollowPending=this.checked;" in src, (
-        "the toggle onchange must capture its intent immediately, not rely on "
-        "the checkbox being read 350ms later (after a possible re-apply)"
-    )
-    assert "_persistAutoScrollFollow(this.checked)" in src, (
-        "the mirror must be persisted synchronously on toggle so a failed/lost "
-        "autosave cannot revert the user's choice"
-    )
+    # Every appearance checkbox onchange must route through _markAppearanceChanged
+    # with its settings key, so its intent survives a later DOM re-apply.
+    for key in (
+        "session_jump_buttons",
+        "session_endless_scroll",
+        "auto_scroll_follow",
+        "render_user_markdown",
+        "large_text_paste_as_attachment",
+        "project_quick_create_buttons",
+    ):
+        assert "_markAppearanceChanged('%s', this.checked)" % key in src, (
+            "appearance checkbox for %s must capture its intent per-field" % key
+        )
 
 
-def test_payload_builders_use_captured_value():
+def test_payload_builders_prefer_appearance_pending():
     src = _read("static/panels.js")
-    assert "typeof _autoScrollFollowPending==='boolean'" in src, (
-        "both the debounced autosave payload and the explicit save payload must "
-        "prefer the captured toggle value over the live checkbox"
+    # Both payload builders must consult _appearancePending before the live DOM.
+    assert src.count("'auto_scroll_follow' in _appearancePending") >= 2, (
+        "auto_scroll_follow override must appear in both _appearancePayloadFromUi and saveSettings"
     )
-    # Both call sites present.
-    assert src.count("typeof _autoScrollFollowPending==='boolean'") >= 2, (
-        "expected the capture guard in both _appearancePayloadFromUi and "
-        "saveSettings"
-    )
+    assert "'render_user_markdown' in _appearancePending" in src
+    assert "'large_text_paste_as_attachment' in _appearancePending" in src
+    assert "'project_quick_create_buttons' in _appearancePending" in src
+    assert "'session_jump_buttons' in _appearancePending" in src
+    assert "'session_endless_scroll' in _appearancePending" in src
 
 
-def test_capture_cleared_after_save_settles():
+def test_appearance_pending_cleared_after_save():
     src = _read("static/panels.js")
-    assert "_autoScrollFollowPending=null;" in src, (
-        "the capture must be cleared once the autosave settles, so later "
-        "re-applies / edits read the live checkbox again instead of a stale intent"
+    # Cleared after the debounced autosave settles AND after the explicit save.
+    assert src.count("if(typeof _appearancePending==='object') _appearancePending={};") >= 2, (
+        "pending intent must be cleared once the save settles (autosave + explicit save)"
     )
 
 
-def test_capture_survives_reapply_behavior():
-    """Simulate the race: toggle ON -> panel re-apply sets checkbox=false ->
-    debounced autosave must still send true (via the captured value)."""
-    import re as _re
-    import shutil
+def test_reapply_does_not_clobber_toggle_node():
+    """Simulate: toggle A -> re-apply resets DOM -> toggle B -> save. Both must persist."""
     import subprocess
 
-    assert shutil.which("node"), "node required for this test"
+    assert __import__("shutil").which("node"), "node required for this test"
     src = _read("static/panels.js")
-    # Confirm the real guard text is present in source (the behavior below
-    # mirrors exactly what the patched code does).
-    assert "typeof _autoScrollFollowPending==='boolean'" in src, "guard missing in source"
-
+    assert "function _markAppearanceChanged(" in src
+    # minimal harness: load panels.js, drive the scenario, inspect POST body
     js = r"""
-let _autoScrollFollowPending = null;
-function _persistAutoScrollFollow(v){ return v; }
-// Fake DOM: checkbox that a re-apply resets to false.
-const checkbox = { checked: false };
-function $(id){ return id === 'settingsAutoScrollFollow' ? checkbox : null; }
-
-// 1) user toggles ON -> handler logic (mirrored from onchange)
-checkbox.checked = true;
-_autoScrollFollowPending = true;            // captured intent
-_persistAutoScrollFollow(true);             // immediate mirror
-// 2) a settings-panel re-apply resets the checkbox (stale server value)
-checkbox.checked = false;
-// 3) debounced autosave builds the payload and MUST send true
-const payload = {
-  auto_scroll_follow: (typeof _autoScrollFollowPending === 'boolean')
-    ? _autoScrollFollowPending
-    : !!($('settingsAutoScrollFollow')||{}).checked,
-};
-if (payload.auto_scroll_follow !== true) throw new Error('captured value lost to re-apply: '+payload.auto_scroll_follow);
-// 4) save settles -> capture cleared
-_autoScrollFollowPending = null;
-if (_autoScrollFollowPending !== null) throw new Error('capture not cleared');
-console.log('CAPTURE-OK');
+const fs=require('fs');
+const vm=require('vm');
+const els={};
+['settingsAutoScrollFollow','settingsRenderUserMarkdown','settingsLargeTextPasteAsAttachment',
+ 'settingsSessionJumpButtons','settingsSessionEndlessScroll','settingsProjectQuickCreateButtons',
+ 'settingsShowTitlebarProfile','settingsTheme','settingsSkin','settingsFontSize'].forEach(id=>{
+  els[id]={id,checked:false,value:'',style:{},dataset:{},_onchange:null,
+    set onchange(fn){this._onchange=fn;},get onchange(){return this._onchange;},
+    addEventListener(){},classList:{add(){},remove(){},toggle(){},contains(){return false;}},querySelectorAll(){return [];}};
+});
+const posts=[];
+let server={auto_scroll_follow:false,render_user_markdown:false,large_text_paste_as_attachment:false,
+  session_jump_buttons:false,session_endless_scroll:false,project_quick_create_buttons:false,theme:'dark',skin:'default',font_size:'default'};
+const sb={console,setTimeout,clearTimeout,setInterval,clearInterval,JSON,Math,Date,RegExp,Promise,
+  addEventListener(){},removeEventListener(){},dispatchEvent(){},window:{},
+  document:{getElementById:()=>null,querySelector:()=>null,querySelectorAll:()=>[],documentElement:{dataset:{}},addEventListener(){}},
+  localStorage:{getItem:()=>null,setItem(){},removeItem(){}},
+  fetch:async(u,opts)=>{const b=opts&&opts.body?JSON.parse(opts.body):null;
+    if(String(u).includes('/api/settings')&&(!opts||opts.method==='GET'||!opts.method))return{ok:true,status:200,json:async()=>JSON.parse(JSON.stringify(server))};
+    if(String(u).includes('/api/settings')&&opts&&opts.method==='POST'){posts.push(b);for(const[k,v]of Object.entries(b)){if(typeof v==='boolean')server[k]=v;else if(k==='theme'||k==='skin'||k==='font_size')server[k]=v;}return{ok:true,status:200,json:async()=>JSON.parse(JSON.stringify(server))};}
+    return{ok:true,status:200,json:async()=>({})};}};
+sb.window=sb;sb.globalThis=sb;vm.createContext(sb);
+sb.$=id=>els[id]||null;
+sb.api=async(p,opts={})=>{const url=(typeof p==='string'&&p.startsWith('http'))?p:'http://x/'+String(p).replace(/^\//,'');return sb.fetch(url,opts);};
+sb.checkWebUIVersionSkew=()=>{};sb._persistAutoScrollFollow=v=>v;sb._readPersistedAutoScrollFollow=()=>true;
+sb._applySessionNavigationPrefs=()=>{};sb._syncThemePicker=()=>{};sb._buildSkinPicker=()=>{};sb._applyFontSize=()=>{};sb._syncFontSizePicker=()=>{};
+sb.t=k=>k;sb.showToast=()=>{};sb._setAppearanceAutosaveStatus=()=>{};sb._applyWorklogDetailsExpandedDefault=()=>{};sb.clearMessageRenderCache=()=>{};sb.renderMessages=()=>{};
+vm.runInContext(fs.readFileSync('/root/hermes-webui/static/panels.js','utf8'),sb,{filename:'panels.js'});
+(async()=>{
+  await sb.loadSettingsPanel();
+  els.settingsRenderUserMarkdown.checked=true; els.settingsRenderUserMarkdown.onchange&&els.settingsRenderUserMarkdown.onchange();
+  await sb.loadSettingsPanel();  // re-apply resets DOM to stale false
+  els.settingsAutoScrollFollow.checked=true; els.settingsAutoScrollFollow.onchange&&els.settingsAutoScrollFollow.onchange();
+  await new Promise(r=>setTimeout(r,700));
+  const p=posts[posts.length-1];
+  if(!(server.render_user_markdown===true&&server.auto_scroll_follow===true)) throw new Error('clobber: '+JSON.stringify({ru:server.render_user_markdown,af:server.auto_scroll_follow}));
+  console.log('NO-CLOBBER-OK');
+  process.exit(0);
+})().catch(e=>{console.log('ERR',e.message);process.exit(1);});
 """
-    proc = subprocess.run(["node", "-e", js], capture_output=True, text=True, cwd=ROOT, timeout=30)
-    assert proc.returncode == 0, proc.stderr
-    assert "CAPTURE-OK" in proc.stdout, proc.stdout
+    proc = subprocess.run(["node", "-e", js], capture_output=True, text=True, cwd=ROOT, timeout=40)
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    assert "NO-CLOBBER-OK" in proc.stdout, proc.stdout
