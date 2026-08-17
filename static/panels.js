@@ -9304,6 +9304,11 @@ function _minimalAppearancePayload(){
 }
 
 function _scheduleAppearanceAutosave(){
+  // #1360-boot-guard: don't autosave until loadSettingsPanel has populated the
+  // checkboxes from the server. Otherwise boot-time callers (theme/skin/font
+  // reconciliation, picker setup) POST the default-unchecked state (all false)
+  // to the server, overwriting saved values on every page reload.
+  if(!_settingsPanelReady) return;
   let payload;
   try{
     payload=_appearancePayloadFromUi();
@@ -9813,6 +9818,12 @@ function _syncSettingsMaxTokensPlaceholder(field, fallbackValue){
 // that has fired onchange since the last successful save lives here until the
 // save settles, so re-applies and later snapshots can never clobber it.
 let _appearancePending = {};
+// #1360-boot-guard: suppress appearance autosave until loadSettingsPanel has
+// finished populating the checkboxes from the server. Without this, boot-time
+// theme/skin/font reconciliation (or any code that calls _scheduleAppearanceAutosave
+// before the settings panel loads) POSTs the default-unchecked checkbox state
+// (all false) to the server, overwriting the user's saved values on every reload.
+let _settingsPanelReady = false;
 
 function _markAppearanceChanged(key, value){
   _appearancePending[key] = value;
@@ -10549,6 +10560,13 @@ async function loadSettingsPanel(){
     switchSettingsSection(_settingsSection);
   }catch(e){
     showToast(t('settings_load_failed')+e.message);
+  }finally{
+    // #1360-boot-guard: enable appearance autosave once loadSettingsPanel has
+    // run (even partially). Before this point, boot-time _scheduleAppearanceAutosave
+    // calls (from theme/skin/font reconciliation) POST the default-unchecked
+    // checkbox state (all false), overwriting saved values on every reload.
+    // Use finally so a throw in a late helper doesn't leave the guard stuck off.
+    _settingsPanelReady = true;
   }
 }
 
