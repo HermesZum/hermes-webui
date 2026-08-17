@@ -5473,7 +5473,7 @@ let _cognitiveSyncPlan = null;
 
 async function _loadCognitiveData(force) {
   try {
-    _cognitiveData = await api('/api/memory/cognitive', {cache:'no-store', timeoutMs:15000});
+    _cognitiveData = await api('/api/memory/cognitive', {cache:'no-store', timeoutMs:15000, redirect401:false, timeoutToast:false});
   } catch (e) {
     _cognitiveData = {available:false, reason:(e && e.message) ? e.message : String(e)};
   }
@@ -5608,7 +5608,7 @@ async function cognitiveAction(action, id) {
   if (_cognitiveBusy) return;
   _cognitiveBusy = true;
   try {
-    const res = await api('/api/memory/cognitive', {method:'POST', body:JSON.stringify({action: action, id: id})});
+    const res = await api('/api/memory/cognitive', {method:'POST', body:JSON.stringify({action: action, id: id}), redirect401:false, timeoutToast:false});
     if (res && res.ok) {
       await _loadCognitiveData(true);
     } else {
@@ -5656,6 +5656,7 @@ async function cognitiveSyncPlan(target) {
     const res = await api('/api/memory/cognitive', {
       method: 'POST',
       body: JSON.stringify({ action: 'sync_plan', target: target }),
+      redirect401: false, timeoutToast: false,
     });
     if (!res || !res.ok) {
       bodyEl.innerHTML = `<div class="memory-empty">${esc((res && res.error) ? res.error : 'Plan failed')}</div>`;
@@ -5733,6 +5734,7 @@ async function cognitiveSyncApply() {
     const res = await api('/api/memory/cognitive', {
       method: 'POST',
       body: JSON.stringify({ action: 'sync_apply', target: plan.target || 'both' }),
+      redirect401: false, timeoutToast: false,
     });
     if (!res || !res.ok) {
       alert((res && res.error) ? res.error : 'Apply failed');
@@ -5809,7 +5811,7 @@ async function cognitiveSubmitAdd() {
   if (_cognitiveBusy) return;
   _cognitiveBusy = true;
   try {
-    const res = await api('/api/memory/cognitive', {method:'POST', body:JSON.stringify(payload)});
+    const res = await api('/api/memory/cognitive', {method:'POST', body:JSON.stringify(payload), redirect401:false, timeoutToast:false});
     if (res && res.ok) {
       _cognitiveAddOpen = false;
       _cognitiveAddDraft = '';
@@ -9186,7 +9188,9 @@ function _appearancePayloadFromUi(){
     transparent_stream_event_timestamps: transparentEventTimestamps ? transparentEventTimestamps.checked : true,
     session_jump_buttons: !!($('settingsSessionJumpButtons')||{}).checked,
     session_endless_scroll: !!($('settingsSessionEndlessScroll')||{}).checked,
-    auto_scroll_follow: !!($('settingsAutoScrollFollow')||{}).checked,
+    auto_scroll_follow: (typeof _autoScrollFollowPending==='boolean')
+      ? _autoScrollFollowPending
+      : !!($('settingsAutoScrollFollow')||{}).checked,
     render_user_markdown: !!($('settingsRenderUserMarkdown')||{}).checked,
     large_text_paste_as_attachment: !!($('settingsLargeTextPasteAsAttachment')||{}).checked,
     project_quick_create_buttons: !!($('settingsProjectQuickCreate')||{}).checked,
@@ -9304,6 +9308,12 @@ async function _autosaveAppearanceSettings(payload){
     }
     window._sessionEndlessScrollEnabled=!!(saved&&saved.session_endless_scroll);
     window._autoScrollFollow=!saved||saved.auto_scroll_follow!==false;
+    // #1360-follow-up: the pending intent has now been persisted (and echoed by
+    // the server), so clear the capture. Until the next toggle, payload builders
+    // fall back to reading the live checkbox again — keeping them correct for any
+    // re-apply / sub-panel reload that happens after the save settles.
+    if(typeof _autoScrollFollowPending!=='undefined') _autoScrollFollowPending=null;
+    else window._autoScrollFollowPending=null;
     // #6819: persist ONLY from an explicit boolean in the server response.
     // A failed autosave (`saved` falsy) or a partial response without the key
     // would otherwise write the synthesized default (ON) into the mirror,
@@ -9738,6 +9748,13 @@ function _syncSettingsMaxTokensPlaceholder(field, fallbackValue){
     : 'No override';
 }
 
+// #1360-follow-up: captures the user's Auto-follow toggle intent at change time.
+// null = "no pending toggle, read the live checkbox". A boolean = "use this value
+// for the next autosave/explicit save" — protects the toggle from being clobbered
+// by loadSettingsPanel() re-applying the stale server value to the checkbox before
+// the debounced autosave fires (which previously persisted false on reload).
+let _autoScrollFollowPending=null;
+
 async function loadSettingsPanel(){
   try{
     const settings=await api('/api/settings');
@@ -9831,6 +9848,17 @@ async function loadSettingsPanel(){
       }
       autoScrollFollowCb.onchange=function(){
         window._autoScrollFollow=this.checked;
+        // #1360-follow-up: capture the user's intent NOW, not when the debounced
+        // autosave (350ms later) reads the checkbox. loadSettingsPanel() re-applies
+        // settings.auto_scroll_follow from the (stale) server value to the checkbox
+        // on every panel (re)load; if that re-apply lands between the toggle and the
+        // pending autosave fire, the checkbox is reset to false and a false gets
+        // persisted — so a reload shows the box unchecked despite the user enabling
+        // it. Persisting the mirror immediately and routing the autosave/save through
+        // this captured value makes the toggle authoritative regardless of re-apply.
+        if(typeof _autoScrollFollowPending!=='undefined') _autoScrollFollowPending=this.checked;
+        else window._autoScrollFollowPending=this.checked;
+        if(typeof _persistAutoScrollFollow==='function') _persistAutoScrollFollow(this.checked);
         _scheduleAppearanceAutosave();
       };
     }
@@ -13375,7 +13403,9 @@ async function saveSettings(andClose){
     ? ($('settingsChatActivityDisplayMode')||{}).value
     : 'compact_worklog';
   body.transparent_stream_event_timestamps=(($('settingsTransparentEventTimestamps')||{}).checked)!==false;
-  body.auto_scroll_follow=!!($('settingsAutoScrollFollow')||{}).checked;
+  body.auto_scroll_follow=(typeof _autoScrollFollowPending==='boolean')
+    ? _autoScrollFollowPending
+    : !!($('settingsAutoScrollFollow')||{}).checked;
   body.render_user_markdown=!!($('settingsRenderUserMarkdown')||{}).checked;
   body.large_text_paste_as_attachment=!!($('settingsLargeTextPasteAsAttachment')||{}).checked;
   body.project_quick_create_buttons=!!($('settingsProjectQuickCreate')||{}).checked;
@@ -14062,7 +14092,7 @@ async function _restoreCheckpoint(workspace,checkpoint,message){
 
 async function _refreshMemoryIndicator(){
   try {
-    const data = await api('/api/memory/cognitive', {cache:'no-store', timeoutMs:15000});
+    const data = await api('/api/memory/cognitive', {cache:'no-store', timeoutMs:15000, redirect401:false, timeoutToast:false});
     _cognitiveData = data;
     if (typeof _syncMemoryIndicator === 'function') {
       const stats = (data && data.stats) || {};
