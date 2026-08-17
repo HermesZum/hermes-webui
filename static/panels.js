@@ -9283,8 +9283,36 @@ function _rememberAppearanceSaved(payload){
   _settingsFontSizeOnOpen=payload.font_size||localStorage.getItem('hermes-font-size')||'default';
 }
 
+function _minimalAppearancePayload(){
+  // #1360-follow-up: guaranteed-not-to-throw fallback used when the full
+  // payload builder throws (e.g. a secondary control helper is unavailable in a
+  // partial DOM). Captures the core appearance toggles so a broken helper can
+  // never block a save or silently drop the user's changes.
+  const cb = (id) => !!(($('#' + id) || {}).checked);
+  return {
+    theme: ($('settingsTheme') || {}).value || 'dark',
+    skin: ($('settingsSkin') || {}).value || 'default',
+    font_size: ($('settingsFontSize') || {}).value || 'default',
+    session_jump_buttons: cb('settingsSessionJumpButtons'),
+    session_endless_scroll: cb('settingsSessionEndlessScroll'),
+    auto_scroll_follow: cb('settingsAutoScrollFollow'),
+    render_user_markdown: cb('settingsRenderUserMarkdown'),
+    large_text_paste_as_attachment: cb('settingsLargeTextPasteAsAttachment'),
+    project_quick_create_buttons: cb('settingsProjectQuickCreate'),
+    show_titlebar_profile: cb('settingsShowTitlebarProfile'),
+  };
+}
+
 function _scheduleAppearanceAutosave(){
-  const payload=_appearancePayloadFromUi();
+  let payload;
+  try{
+    payload=_appearancePayloadFromUi();
+  }catch(e){
+    // #1360-follow-up: never let a payload-builder throw silently kill the save
+    // (which previously produced zero POSTs and reverted every toggle on reload).
+    console.error('[settings] appearance payload capture failed; using minimal payload', e);
+    payload=_minimalAppearancePayload();
+  }
   // Keep discard/close behavior aligned with the new mental model: appearance
   // changes are committed immediately instead of treated as preview-only edits.
   _rememberAppearanceSaved(payload);
@@ -9294,7 +9322,9 @@ function _scheduleAppearanceAutosave(){
   _settingsAppearanceAutosaveTimer=setTimeout(()=>_autosaveAppearanceSettings(payload),350);
 }
 
-async function _autosaveAppearanceSettings(payload){
+async function _autosaveAppearanceSettings(payload, attempt){
+  attempt = attempt || 1;
+  const MAX_ATTEMPTS = 3;
   try{
     const saved=await _enqueueSettingsPost({method:'POST',body:JSON.stringify(payload)});
     _settingsAppearanceAutosaveRetryPayload=null;
@@ -9365,13 +9395,28 @@ async function _autosaveAppearanceSettings(payload){
     }
     _setAppearanceAutosaveStatus('saved');
   }catch(e){
-    console.warn('[settings] appearance autosave failed', e);
+    // #1360-follow-up: retry transient failures (network blip, 5xx, auth refresh)
+    // before giving up, and surface the failure visibly instead of console-only.
+    if(attempt < MAX_ATTEMPTS){
+      const backoff = attempt * 800;
+      console.warn('[settings] appearance autosave attempt '+attempt+' failed; retrying in '+backoff+'ms', e);
+      setTimeout(()=>_autosaveAppearanceSettings(payload, attempt+1), backoff);
+      return;
+    }
+    console.error('[settings] appearance autosave failed after '+MAX_ATTEMPTS+' attempts', e);
     _setAppearanceAutosaveStatus('failed');
+    if(typeof showToast==='function') showToast(t('settings_autosave_failed')||'Appearance settings could not be saved');
   }
 }
 
 function _retryAppearanceAutosave(){
-  const payload=_settingsAppearanceAutosaveRetryPayload||_appearancePayloadFromUi();
+  let payload;
+  try{
+    payload=_settingsAppearanceAutosaveRetryPayload||_appearancePayloadFromUi();
+  }catch(e){
+    console.error('[settings] appearance retry payload capture failed; using minimal payload', e);
+    payload=_settingsAppearanceAutosaveRetryPayload||_minimalAppearancePayload();
+  }
   _setAppearanceAutosaveStatus('saving');
   _autosaveAppearanceSettings(payload);
 }
