@@ -5250,6 +5250,8 @@ const MEMORY_SECTIONS = [
   { key: 'user',   labelKey: 'user_profile', emptyKey: 'no_profile_yet', iconKey: 'user' },
   { key: 'soul',   labelKey: 'agent_soul', emptyKey: 'no_soul_yet', iconKey: 'sparkles' },
   { key: 'cognitive', label: 'Cognitive Memory', empty: '', iconKey: 'book-open', readOnly: true },
+  { key: 'forge', label: 'Forge Tools', empty: '', iconKey: 'wrench', readOnly: true },
+  { key: 'guardrails', label: 'Guardrails', empty: '', iconKey: 'shield', readOnly: true },
   { key: 'project_context', label: 'Project Context', empty: 'No project context file found for this workspace.', iconKey: 'file-text', readOnly: true },
   { key: 'external_notes', labelKey: 'external_notes_sources', emptyKey: 'external_notes_empty', iconKey: 'book-open' },
 ];
@@ -5390,6 +5392,16 @@ function _renderMemoryDetail(section) {
     if (!_cognitiveData) _loadCognitiveData();
     return;
   }
+  if (section === 'forge') {
+    _renderForgeToolsDetail();
+    if (!_forgeData) _loadForgeData();
+    return;
+  }
+  if (section === 'guardrails') {
+    _renderGuardrailsDetail();
+    if (!_guardrailsData) _loadGuardrailsData();
+    return;
+  }
 
   const meta = _memorySectionMeta(section);
   const title = $('memoryDetailTitle');
@@ -5466,6 +5478,10 @@ async function _loadCognitiveData(force) {
     _cognitiveData = {available:false, reason:(e && e.message) ? e.message : String(e)};
   }
   _renderCognitiveMemoryDetail();
+  if (typeof _syncMemoryIndicator === 'function') {
+    const stats = (_cognitiveData && _cognitiveData.stats) || {};
+    _syncMemoryIndicator(stats);
+  }
 }
 
 function _renderCognitiveMemoryDetail() {
@@ -5497,12 +5513,14 @@ function _renderCognitiveMemoryDetail() {
   const chips = [
     chip('total', stats.total || 0),
     chip('pinned', stats.pinned || 0),
+    chip('critical', stats.critical || 0),
     chip('hard to find', stats.hard_to_find || 0),
     chip('prunable', stats.prunable || 0),
     chip('superseded', stats.superseded || 0),
   ].join('');
   const filtered = memories.filter(m => {
     if (_cognitiveFilter === 'pinned' && !m.pinned) return false;
+    if (_cognitiveFilter === 'critical' && !m.critical) return false;
     if (_cognitiveFilter === 'research' && m.origin !== 'research_finding') return false;
     if (_cognitiveFilter === 'hard' && !m.hard_to_find) return false;
     if (_cognitiveFilter === 'timeless' && m.temporal !== 'timeless') return false;
@@ -5524,7 +5542,10 @@ function _renderCognitiveMemoryDetail() {
       <input id="cognitiveSearch" type="search" placeholder="Filter memories…" value="${esc(_cognitiveQuery)}" oninput="cognitiveSetQuery(this.value)" />
       <select id="cognitiveFilter" onchange="cognitiveSetFilter(this.value)" aria-label="Filter">
         <option value="all" ${_cognitiveFilter==='all'?'selected':''}>All</option>
+        <option value="memory" ${_cognitiveFilter==='memory'?'selected':''}>Agent Memory</option>
+        <option value="user" ${_cognitiveFilter==='user'?'selected':''}>User Profile</option>
         <option value="pinned" ${_cognitiveFilter==='pinned'?'selected':''}>Pinned</option>
+        <option value="critical" ${_cognitiveFilter==='critical'?'selected':''}>Critical (safety)</option>
         <option value="research" ${_cognitiveFilter==='research'?'selected':''}>Research findings</option>
         <option value="hard" ${_cognitiveFilter==='hard'?'selected':''}>Hard to find</option>
         <option value="timeless" ${_cognitiveFilter==='timeless'?'selected':''}>Timeless</option>
@@ -5552,14 +5573,17 @@ function _renderCognitiveMemoryDetail() {
 function _cognitiveCardHtml(m) {
   const id = esc(m.id || '');
   const pinned = m.pinned ? '<span class="cognitive-badge cognitive-badge-pinned">PINNED</span>' : '';
+  const critical = m.critical ? '<span class="cognitive-badge cognitive-badge-critical">CRITICAL</span>' : '';
   const htf = m.hard_to_find ? '<span class="cognitive-badge cognitive-badge-hard">HARD TO FIND</span>' : '';
+  const target = (m.target === 'user') ? '<span class="cognitive-badge cognitive-badge-user">USER PROFILE</span>' : '<span class="cognitive-badge cognitive-badge-memory">AGENT MEMORY</span>';
   const eff = (typeof m.effective_importance === 'number') ? m.effective_importance : (m.importance || 0);
   const pct = Math.max(0, Math.min(100, Math.round(eff * 100)));
   const content = (m.content || '').length > 600 ? esc((m.content || '').slice(0, 600)) + '…' : esc(m.content || '');
-  return `<section class="cognitive-card${m.pinned ? ' cognitive-card-pinned' : ''}">
+  return `<section class="cognitive-card${m.pinned ? ' cognitive-card-pinned' : ''}${m.critical ? ' cognitive-card-critical' : ''}">
     <div class="cognitive-card-head">
+      ${target}
       <span class="detail-badge">${esc(m.origin || 'unknown')}</span>
-      ${pinned}${htf}
+      ${pinned}${critical}${htf}
       <span class="cognitive-meta">${esc(m.temporal || 'stable')} · rel ${esc(m.reliability)} · ${esc(m.access_count)} accesses · ${esc(_cognitiveAge(m.last_access))} ago</span>
       <span class="cognitive-actions">
         <button type="button" class="btn-secondary cognitive-btn" onclick="cognitiveAction('${m.pinned ? 'unpin' : 'pin'}','${id}')">${m.pinned ? 'Unpin' : 'Pin'}</button>
@@ -5806,6 +5830,316 @@ function _showCognitiveAddError(msg) {
   if (el) {
     el.textContent = msg;
     el.style.display = '';
+  }
+}
+
+// ── Forge tools (hermes-tool-forge plugin) ──────────────────────────────────
+
+let _forgeData = null;
+let _forgeBusy = false;
+let _forgeQuery = '';
+let _forgeSelectedTool = null;
+
+async function _loadForgeData(force) {
+  try {
+    _forgeData = await api('/api/forge', {cache:'no-store', timeoutMs:15000});
+  } catch (e) {
+    _forgeData = {available:false, reason:(e && e.message) ? e.message : String(e)};
+  }
+  _renderForgeToolsDetail();
+}
+
+function _renderForgeToolsDetail() {
+  const title = $('memoryDetailTitle');
+  const body = $('memoryDetailBody');
+  const empty = $('memoryDetailEmpty');
+  if (!title || !body) return;
+  title.textContent = 'Forge Tools';
+  const data = _forgeData;
+  if (!data) {
+    body.innerHTML = '<div class="main-view-content"><div class="memory-empty">Loading…</div></div>';
+    body.style.display = '';
+    if (empty) empty.style.display = 'none';
+    _memoryMode = 'read';
+    _setMemoryHeaderButtons('read');
+    return;
+  }
+  if (data.available === false) {
+    body.innerHTML = `<div class="main-view-content"><div class="memory-empty">${esc(data.reason || 'Tool forge store unavailable.')}</div></div>`;
+    body.style.display = '';
+    if (empty) empty.style.display = 'none';
+    _memoryMode = 'read';
+    _setMemoryHeaderButtons('read');
+    return;
+  }
+  const stats = data.stats || {};
+  const tools = Array.isArray(data.tools) ? data.tools : [];
+  const chip = (label, value) => `<span class="cognitive-chip"><strong>${esc(value)}</strong> ${esc(label)}</span>`;
+  const chips = [
+    chip('total', stats.total || 0),
+    chip('approved', stats.approved || 0),
+    chip('tested', stats.tested || 0),
+    chip('promoted', stats.promoted || 0),
+  ].join('');
+  const filtered = tools.filter(t => {
+    if (_forgeQuery) {
+      const q = _forgeQuery.toLowerCase();
+      if (!(t.name || '').toLowerCase().includes(q) && !(t.description || '').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+  const listHtml = filtered.length
+    ? filtered.map(t => _forgeCardHtml(t)).join('')
+    : `<div class="memory-empty">${tools.length ? 'No tools match the current filter.' : 'No forged tools yet. Ask Hermes to forge a tool to see it here.'}</div>`;
+  // Detail view for selected tool
+  const detailHtml = _forgeSelectedTool ? _forgeToolDetailHtml(_forgeSelectedTool) : '';
+  body.innerHTML = `<div class="main-view-content">
+    <div class="cognitive-controls">
+      <input id="forgeSearch" type="search" placeholder="Filter tools…" value="${esc(_forgeQuery)}" oninput="forgeSetQuery(this.value)" />
+      <button type="button" class="btn-secondary" onclick="_loadForgeData(true)">Refresh</button>
+    </div>
+    <div class="cognitive-stats">${chips}</div>
+    ${detailHtml}
+    ${listHtml}
+  </div>`;
+  body.style.display = '';
+  if (empty) empty.style.display = 'none';
+  _memoryMode = 'read';
+  _setMemoryHeaderButtons('read');
+}
+
+function _forgeCardHtml(t) {
+  const id = esc(t.id || '');
+  const approved = t.judge_approved ? '<span class="cognitive-badge cognitive-badge-pinned">APPROVED</span>' : '<span class="cognitive-badge" style="background:#8a6d3b;color:#fff">PENDING</span>';
+  const tested = t.test_passed ? '<span class="cognitive-badge" style="background:#2d6a4f;color:#fff">TESTED</span>' : '';
+  const promoted = t.promoted ? '<span class="cognitive-badge cognitive-badge-hard">PROMOTED</span>' : '';
+  const code = (t.python_code || '').length > 200 ? esc((t.python_code || '').slice(0, 200)) + '…' : esc(t.python_code || '');
+  return `<section class="cognitive-card">
+    <div class="cognitive-card-head">
+      <strong>${esc(t.name || 'unnamed')}</strong>
+      ${approved}${tested}${promoted}
+      <span class="cognitive-meta">${esc(t.use_count || 0)} uses · ${esc(t.description || '').slice(0, 60)}</span>
+      <span class="cognitive-actions">
+        <button type="button" class="btn-secondary cognitive-btn" onclick="forgeViewTool('${id}')">View</button>
+        <button type="button" class="btn-secondary cognitive-btn cognitive-btn-danger" onclick="forgeDeleteTool('${id}')">Delete</button>
+      </span>
+    </div>
+    <div class="memory-content cognitive-content"><pre style="white-space:pre-wrap;font-size:12px">${code}</pre></div>
+  </section>`;
+}
+
+function _forgeToolDetailHtml(tool) {
+  const id = esc(tool.id || '');
+  const code = esc(tool.python_code || '');
+  const testOutput = tool.test_output ? esc(tool.test_output) : 'No test output';
+  const judgeVerdict = tool.judge_verdict ? esc(tool.judge_verdict) : 'No judge verdict';
+  const paramsSchema = esc(JSON.stringify(tool.params_schema || {}, null, 2));
+  return `<section class="cognitive-card cognitive-card-pinned" style="margin-bottom:12px">
+    <div class="cognitive-card-head">
+      <strong>${esc(tool.name || 'unnamed')}</strong>
+      <span class="cognitive-actions">
+        <button type="button" class="btn-secondary cognitive-btn" onclick="forgeCloseDetail()">Close</button>
+      </span>
+    </div>
+    <div style="margin-top:8px">
+      <div class="cognitive-meta" style="margin-bottom:4px">Description</div>
+      <div class="memory-content cognitive-content">${esc(tool.description || '')}</div>
+    </div>
+    <div style="margin-top:8px">
+      <div class="cognitive-meta" style="margin-bottom:4px">Parameters (JSON schema)</div>
+      <pre style="white-space:pre-wrap;font-size:12px;background:rgba(0,0,0,0.2);padding:8px;border-radius:4px">${paramsSchema}</pre>
+    </div>
+    <div style="margin-top:8px">
+      <div class="cognitive-meta" style="margin-bottom:4px">Python code</div>
+      <pre style="white-space:pre-wrap;font-size:12px;background:rgba(0,0,0,0.2);padding:8px;border-radius:4px">${code}</pre>
+    </div>
+    <div style="margin-top:8px">
+      <div class="cognitive-meta" style="margin-bottom:4px">Judge verdict</div>
+      <div class="memory-content cognitive-content">${judgeVerdict}</div>
+    </div>
+    <div style="margin-top:8px">
+      <div class="cognitive-meta" style="margin-bottom:4px">Test output</div>
+      <pre style="white-space:pre-wrap;font-size:12px;background:rgba(0,0,0,0.2);padding:8px;border-radius:4px">${testOutput}</pre>
+    </div>
+  </section>`;
+}
+
+async function forgeViewTool(id) {
+  if (_forgeBusy) return;
+  _forgeBusy = true;
+  try {
+    const res = await api('/api/forge', {method:'POST', body:JSON.stringify({action:'view', id:id})});
+    if (res && res.ok && res.tool) {
+      _forgeSelectedTool = res.tool;
+      _renderForgeToolsDetail();
+    } else {
+      alert((res && res.error) ? res.error : 'View failed');
+    }
+  } catch (e) {
+    alert((e && e.message) ? e.message : String(e));
+  } finally {
+    _forgeBusy = false;
+  }
+}
+
+function forgeCloseDetail() {
+  _forgeSelectedTool = null;
+  _renderForgeToolsDetail();
+}
+
+async function forgeDeleteTool(id) {
+  if (_forgeBusy) return;
+  if (!confirm('Delete this forged tool? This cannot be undone.')) return;
+  _forgeBusy = true;
+  try {
+    const res = await api('/api/forge', {method:'POST', body:JSON.stringify({action:'delete', id:id})});
+    if (res && res.ok) {
+      if (_forgeSelectedTool && _forgeSelectedTool.id === id) _forgeSelectedTool = null;
+      await _loadForgeData(true);
+    } else {
+      alert((res && res.error) ? res.error : 'Delete failed');
+    }
+  } catch (e) {
+    alert((e && e.message) ? e.message : String(e));
+  } finally {
+    _forgeBusy = false;
+  }
+}
+
+function forgeSetQuery(q) {
+  _forgeQuery = q;
+  _renderForgeToolsDetail();
+}
+
+/* ── Guardrails panel (hermes-guardrails plugin audit store) ── */
+let _guardrailsData = null;
+let _guardrailsQuery = '';
+let _guardrailsActionFilter = '';
+
+async function _loadGuardrailsData(force) {
+  try {
+    const qs = new URLSearchParams();
+    if (_guardrailsActionFilter) qs.set('action', _guardrailsActionFilter);
+    const url = '/api/guardrails' + (qs.toString() ? '?' + qs.toString() : '');
+    _guardrailsData = await api(url, {cache:'no-store', timeoutMs:15000});
+  } catch (e) {
+    _guardrailsData = {available:false, reason:(e && e.message) ? e.message : String(e)};
+  }
+  _renderGuardrailsDetail();
+}
+
+function _guardrailsChip(label, value) {
+  return `<span class="cognitive-chip"><strong>${esc(value)}</strong> ${esc(label)}</span>`;
+}
+
+function _guardrailsEntryHtml(e) {
+  const id = esc(e.id || '');
+  const ts = e.timestamp ? new Date(e.timestamp * 1000).toLocaleString() : '';
+  const sev = esc(e.severity || 'info');
+  const action = esc(e.action || 'scanned');
+  const actionClass = action === 'blocked' ? 'cognitive-badge-pinned'
+    : action === 'warned' ? '' : 'cognitive-badge-hard';
+  const sevClass = sev === 'high' ? 'cognitive-badge-pinned'
+    : sev === 'medium' ? '' : 'cognitive-badge-hard';
+  const findings = Array.isArray(e.findings) ? e.findings : [];
+  const findingsHtml = findings.length
+    ? findings.map(f => `<div class="guardrails-finding"><span class="cognitive-badge ${f.severity === 'high' ? 'cognitive-badge-pinned' : ''}" style="${f.severity === 'medium' ? 'background:#8a6d3b;color:#fff' : ''}">${esc(f.kind)}</span> <code>${esc(f.value || '')}</code></div>`).join('')
+    : '';
+  const msg = e.message ? `<div class="guardrails-msg">${esc(e.message).slice(0, 300)}</div>` : '';
+  return `<section class="cognitive-card">
+    <div class="cognitive-card-head">
+      <strong>${esc(e.tool_name || 'unknown')}</strong>
+      <span class="cognitive-badge ${actionClass}">${action.toUpperCase()}</span>
+      <span class="cognitive-badge ${sevClass}" style="${sev === 'medium' ? 'background:#8a6d3b;color:#fff' : ''}">${sev.toUpperCase()}</span>
+      <span class="cognitive-meta">${ts}</span>
+    </div>
+    ${findingsHtml}
+    ${msg}
+  </section>`;
+}
+
+function _renderGuardrailsDetail() {
+  const title = $('memoryDetailTitle');
+  const body = $('memoryDetailBody');
+  const empty = $('memoryDetailEmpty');
+  if (!title || !body) return;
+  title.textContent = 'Guardrails';
+  const data = _guardrailsData;
+  if (!data) {
+    body.innerHTML = '<div class="main-view-content"><div class="memory-empty">Loading…</div></div>';
+    body.style.display = '';
+    if (empty) empty.style.display = 'none';
+    _memoryMode = 'read';
+    _setMemoryHeaderButtons('read');
+    return;
+  }
+  if (data.available === false) {
+    body.innerHTML = `<div class="main-view-content"><div class="memory-empty">${esc(data.reason || 'Guardrails store unavailable.')}</div></div>`;
+    body.style.display = '';
+    if (empty) empty.style.display = 'none';
+    _memoryMode = 'read';
+    _setMemoryHeaderButtons('read');
+    return;
+  }
+  const stats = data.stats || {};
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const chips = [
+    _guardrailsChip('total', stats.total || entries.length),
+    _guardrailsChip('blocked', stats.blocked || 0),
+    _guardrailsChip('warned', stats.warned || 0),
+    _guardrailsChip('scanned', stats.scanned || 0),
+  ].join('');
+  const filtered = entries.filter(e => {
+    if (_guardrailsQuery) {
+      const q = _guardrailsQuery.toLowerCase();
+      if (!(e.tool_name || '').toLowerCase().includes(q) &&
+          !(e.message || '').toLowerCase().includes(q) &&
+          !(e.action || '').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+  const listHtml = filtered.length
+    ? filtered.map(_guardrailsEntryHtml).join('')
+    : `<div class="memory-empty">${entries.length ? 'No entries match the current filter.' : 'No guardrails activity yet. Scans and blocks will appear here.'}</div>`;
+  const filterOpts = ['', 'blocked', 'warned', 'allowed', 'scanned']
+    .map(v => `<option value="${v}" ${_guardrailsActionFilter === v ? 'selected' : ''}>${v === '' ? 'All actions' : v}</option>`).join('');
+  body.innerHTML = `<div class="main-view-content">
+    <div class="cognitive-controls">
+      <input id="guardrailsSearch" type="search" placeholder="Filter entries…" value="${esc(_guardrailsQuery)}" oninput="guardrailsSetQuery(this.value)" />
+      <select onchange="guardrailsSetAction(this.value)" style="padding:6px 10px;border-radius:8px;background:#1e293b;color:#e2e8f0;border:1px solid #334155">${filterOpts}</select>
+      <button type="button" class="btn-secondary" onclick="_loadGuardrailsData(true)">Refresh</button>
+      <button type="button" class="btn-secondary" style="color:#f87171" onclick="guardrailsClearLog()">Clear log</button>
+    </div>
+    <div class="cognitive-stats">${chips}</div>
+    ${listHtml}
+  </div>`;
+  body.style.display = '';
+  if (empty) empty.style.display = 'none';
+  _memoryMode = 'read';
+  _setMemoryHeaderButtons('read');
+}
+
+function guardrailsSetQuery(q) {
+  _guardrailsQuery = q;
+  _renderGuardrailsDetail();
+}
+
+function guardrailsSetAction(a) {
+  _guardrailsActionFilter = a;
+  _loadGuardrailsData(true);
+}
+
+async function guardrailsClearLog() {
+  if (!confirm('Clear the entire guardrails audit log? This cannot be undone.')) return;
+  try {
+    const res = await api('/api/guardrails', {method:'POST', body:{action:'clear'}});
+    if (res && res.ok) {
+      await _loadGuardrailsData(true);
+    } else {
+      alert((res && res.reason) ? res.reason : 'Clear failed.');
+    }
+  } catch (e) {
+    alert((e && e.message) ? e.message : String(e));
   }
 }
 
@@ -6454,8 +6788,9 @@ function _setWorkspaceHeaderButtons(mode, ws){
   const show = b => b && (b.style.display = '');
   const hide = b => b && (b.style.display = 'none');
   if (mode === 'read') { if (header) header.style.display = 'flex';
-    const activePath = S.session ? S.session.workspace : '';
-    const isActive = ws && ws.path === activePath;
+    const activePath = S.session ? String(S.session.workspace || '') : '';
+    const wsPath = ws && ws.path ? String(ws.path) : '';
+    const isActive = wsPath && activePath && wsPath.replace(/\\+/g, '/').replace(/\/$/, '') === activePath.replace(/\\+/g, '/').replace(/\/$/, '');
     const isDefault = !!(ws && ws.is_default);
     if (isActive) hide(actBtn); else show(actBtn);
     show(editBtn);
@@ -6497,6 +6832,13 @@ function _clearWorkspaceDetail(){
 async function activateCurrentWorkspace(){
   if (!_currentWorkspaceDetail) return;
   await switchToWorkspace(_currentWorkspaceDetail.path, _currentWorkspaceDetail.name);
+  // Refresh session so the active-workspace check sees the updated binding.
+  try {
+    const r = await api('/api/sessions');
+    const list = Array.isArray(r) ? r : (r && Array.isArray(r.sessions) ? r.sessions : []);
+    const match = list.find(x => x && x.session_id && S.session && x.session_id === S.session.session_id);
+    if (match && S.session) Object.assign(S.session, match);
+  } catch (_) {}
   // Re-render detail after activation so the active badge updates
   _renderWorkspaceDetail(_currentWorkspaceDetail);
 }
@@ -6519,7 +6861,8 @@ function openWorkspaceCreate(){
   if (typeof switchPanel === 'function' && _currentPanel !== 'workspaces') switchPanel('workspaces');
   _workspacePreFormDetail = _currentWorkspaceDetail ? { ..._currentWorkspaceDetail } : null;
   _workspaceMode = 'create';
-  _renderWorkspaceForm({ name:'', path:'', isEdit:false });
+  const chatTitle = (typeof S !== 'undefined' && S.session && S.session.title || '').trim();
+  _renderWorkspaceForm({ name: chatTitle, path:'', isEdit:false });
 }
 
 function editCurrentWorkspace(){
@@ -6539,6 +6882,7 @@ function _renderWorkspaceForm({ name, path, isEdit }){
   const pathHint = isEdit
     ? `<div class="detail-form-hint">${esc(t('workspace_path_readonly') || 'Path cannot be changed. Rename only.')}</div>`
     : `<div class="detail-form-hint">${esc(t('workspace_paths_validated_hint'))}</div>`;
+  const autoCreateCheckbox = !isEdit ? `<div class="detail-form-row"><label class="detail-form-check"><input type="checkbox" id="workspaceFormAutoCreate" checked><span>${esc(t('workspace_auto_create_folder') || 'Create folder if it doesn\'t exist')}</span></label></div>` : '';
   body.innerHTML = `
     <div class="main-view-content">
       <form class="detail-form" onsubmit="event.preventDefault(); saveWorkspaceForm();">
@@ -6554,13 +6898,30 @@ function _renderWorkspaceForm({ name, path, isEdit }){
           </div>
           ${pathHint}
         </div>
+        ${autoCreateCheckbox}
         <div id="workspaceFormError" class="detail-form-error" style="display:none"></div>
       </form>
     </div>`;
   body.style.display = '';
   if (empty) empty.style.display = 'none';
   _setWorkspaceHeaderButtons(isEdit ? 'edit' : 'create');
-  if (!isEdit) _wireWorkspaceFormPathSuggestions();
+  if (!isEdit) {
+    _wireWorkspaceFormPathSuggestions();
+    const nameInput = $('workspaceFormName');
+    const pathInput = $('workspaceFormPath');
+    const autoCreateInput = $('workspaceFormAutoCreate');
+    const updateAutoPath = () => {
+      if (!autoCreateInput || !autoCreateInput.checked || !nameInput || !pathInput || pathInput.value.trim()) return;
+      const raw = nameInput.value.trim();
+      if (!raw) return;
+      const slug = raw.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+      if (!slug) return;
+      pathInput.value = String.prototype.replace.call('~/workspace/' + slug, /\/+/g, '/').replace(/\/$/, '');
+    };
+    if (nameInput) nameInput.addEventListener('input', updateAutoPath);
+    if (autoCreateInput) autoCreateInput.addEventListener('change', updateAutoPath);
+    updateAutoPath();
+  }
   const focus = isEdit ? $('workspaceFormName') : $('workspaceFormPath');
   if (focus) focus.focus();
 }
@@ -6582,15 +6943,25 @@ async function saveWorkspaceForm(){
   const errEl = $('workspaceFormError');
   if (!pathEl || !errEl) return;
   const name = (nameEl ? nameEl.value : '').trim();
-  const path = (pathEl.value || '').trim();
+  let path = (pathEl.value || '').trim();
   errEl.style.display = 'none';
+  if (!path) {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || 'project';
+    path = String.prototype.replace.call('~/workspace/' + slug, /\/+/g, '/').replace(/\/$/, '');
+    if (pathEl) pathEl.value = path;
+  }
+  const autoResolve = !path.startsWith('/') && !path.startsWith('~/') && !path.startsWith('$');
+  if (autoResolve && path && !path.includes('/')) {
+    const resolved = String.prototype.replace.call('~/workspace/' + path, /\/+/g, '/').replace(/\/$/, '');
+    if (pathEl) pathEl.value = resolved;
+    path = resolved;
+  }
   if (!path) { errEl.textContent = t('workspace_path_required') || 'Path is required'; errEl.style.display = ''; return; }
   try {
     if (_workspaceMode === 'edit' && _currentWorkspaceDetail) {
       const targetPath = _currentWorkspaceDetail.path;
       const newName = name || _currentWorkspaceDetail.name || '';
       await api('/api/workspaces/rename', { method:'POST', body: JSON.stringify({ path: targetPath, name: newName }) });
-      // Refresh list and re-render detail
       const data = await api('/api/workspaces');
       _workspaceList = data.workspaces || [];
       _workspacePreFormDetail = null;
@@ -6599,19 +6970,28 @@ async function saveWorkspaceForm(){
       openWorkspaceDetail(targetPath);
       return;
     }
-    const data = await api('/api/workspaces/add', { method:'POST', body: JSON.stringify({ path }) });
+    const autoCreate = !!$('workspaceFormAutoCreate');
+    const data = await api('/api/workspaces/add', { method:'POST', body: JSON.stringify({ path, name, create: autoCreate }) });
     _workspaceList = data.workspaces || [];
     _workspacePreFormDetail = null;
-    // Apply rename if a friendly name was supplied
-    if (name) {
-      try { await api('/api/workspaces/rename', { method:'POST', body: JSON.stringify({ path, name }) }); } catch(_) {}
-      const refreshed = await api('/api/workspaces');
-      _workspaceList = refreshed.workspaces || _workspaceList;
-    }
     renderWorkspacesPanel(_workspaceList);
     showToast(t('workspace_added'));
     const added = _workspaceList.find(w => w.path === path) || _workspaceList[_workspaceList.length - 1];
-    if (added) openWorkspaceDetail(added.path);
+    if (added) {
+      if (_workspaceMode === 'create' && S.session && added.path) {
+        try {
+          const updateRes = await api('/api/session/update', { method:'POST', body: JSON.stringify({ session_id: S.session.session_id, workspace: added.path, model: S.session.model, model_provider: S.session.model_provider || null }) });
+          if (updateRes && updateRes.session) Object.assign(S.session, updateRes.session);
+          else S.session.workspace = added.path;
+        } catch (e) {
+          showToast((t('workspace_switch_failed') || 'Workspace switch failed') + e.message);
+        }
+      }
+      const refreshed = await api('/api/workspaces');
+      _workspaceList = refreshed.workspaces || _workspaceList;
+      renderWorkspacesPanel(_workspaceList);
+      openWorkspaceDetail(added.path);
+    }
   } catch (e) {
     errEl.textContent = t('error_prefix') + e.message;
     errEl.style.display = '';
@@ -13680,6 +14060,22 @@ async function _restoreCheckpoint(workspace,checkpoint,message){
 }
 
 
+async function _refreshMemoryIndicator(){
+  try {
+    const data = await api('/api/memory/cognitive', {cache:'no-store', timeoutMs:15000});
+    _cognitiveData = data;
+    if (typeof _syncMemoryIndicator === 'function') {
+      const stats = (data && data.stats) || {};
+      _syncMemoryIndicator(stats);
+    }
+  } catch (_) {
+    // best-effort refresh; keep existing composer state on failure
+  }
+}
+
+if(typeof window!=='undefined'){
+  window._refreshMemoryIndicator = _refreshMemoryIndicator;
+}
 function updateNotificationPermissionStatus(){
   const el=$('notificationPermissionStatus');
   const btn=$('notificationPermissionButton');

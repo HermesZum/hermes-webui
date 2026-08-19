@@ -13876,6 +13876,20 @@ def handle_get(handler, parsed) -> bool:
         handle_cognitive_get(handler, parsed)
         return True
 
+    # ── Tool forge (GET) — hermes-tool-forge plugin store ──
+    if parsed.path == "/api/forge":
+        from api.forge_bridge import handle_forge_get
+
+        handle_forge_get(handler, parsed)
+        return True
+
+    # ── Guardrails (GET) — hermes-guardrails plugin audit store ──
+    if parsed.path == "/api/guardrails":
+        from api.guardrails_bridge import handle_guardrails_get
+
+        handle_guardrails_get(handler, parsed)
+        return True
+
     # ── Profile API (GET) ──
     if parsed.path == "/api/profiles":
         from api import profiles as profiles_api
@@ -15812,6 +15826,20 @@ def handle_post(handler, parsed) -> bool:
         from api.cognitive_bridge import handle_cognitive_post
 
         handle_cognitive_post(handler, body)
+        return True
+
+    # ── Tool forge (POST) — delete/view/promote_test via plugin store ──
+    if parsed.path == "/api/forge":
+        from api.forge_bridge import handle_forge_post
+
+        handle_forge_post(handler, body)
+        return True
+
+    # ── Guardrails (POST) — clear/view via plugin audit store ──
+    if parsed.path == "/api/guardrails":
+        from api.guardrails_bridge import handle_guardrails_post
+
+        handle_guardrails_post(handler, body)
         return True
 
     if parsed.path in {"/api/gateway/start", "/api/gateway/stop", "/api/gateway/restart"}:
@@ -24115,7 +24143,11 @@ def _handle_workspace_add(handler, body):
     wss = load_workspaces()
     if any(w["path"] == str(p) for w in wss):
         return bad(handler, "Workspace already in list")
-    wss.append({"path": str(p), "name": name or p.name})
+    final_name = name or p.name
+    existing_names = [str(w.get("name", "") or w.get("path", "")) for w in wss]
+    if final_name.lower() in [n.lower() for n in existing_names]:
+        return bad(handler, f"A workspace named '{final_name}' already exists")
+    wss.append({"path": str(p), "name": final_name})
     save_workspaces(wss)
     return j(handler, {"ok": True, "workspaces": wss})
 

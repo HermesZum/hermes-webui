@@ -188,6 +188,7 @@ def _row_to_payload(decay_module, row: Dict[str, Any], params, now: float) -> Di
         "reliability": round(float(row.get("reliability", 1.0)), 4),
         "hard_to_find": bool(row.get("hard_to_find")),
         "pinned": bool(row.get("pinned")),
+        "critical": bool(row.get("critical")),
         "temporal": row.get("temporal", "stable"),
         "superseded": bool(row.get("superseded")),
         "supersedes": row.get("supersedes"),
@@ -197,12 +198,13 @@ def _row_to_payload(decay_module, row: Dict[str, Any], params, now: float) -> Di
     }
 
 
-def _stats(store, decay_module, params, now: float) -> Dict[str, Any]:
+def _stats(store, decay_module, params, now: float, home: Path) -> Dict[str, Any]:
     rows = store.get_all_raw()
     total = len(rows)
     pinned = sum(1 for r in rows if r.get("pinned"))
     hard = sum(1 for r in rows if r.get("hard_to_find"))
     superseded = sum(1 for r in rows if r.get("superseded"))
+    critical = sum(1 for r in rows if r.get("critical"))
     by_origin: Dict[str, int] = {}
     by_temporal: Dict[str, int] = {}
     prunable = 0
@@ -221,9 +223,11 @@ def _stats(store, decay_module, params, now: float) -> Dict[str, Any]:
         "pinned": pinned,
         "hard_to_find": hard,
         "superseded": superseded,
+        "critical": critical,
         "prunable": prunable,
         "by_origin": by_origin,
         "by_temporal": by_temporal,
+        "usage_pct": _db_usage_pct(store),
     }
 
 
@@ -236,6 +240,26 @@ def _read_prune_log(home: Path, limit: int = 30) -> List[str]:
     except OSError:
         return []
     return lines[-limit:]
+
+
+def _builtin_memory_usage_pct(home: Path) -> float:
+    # Markdown files are now minimal stubs managed by the cognitive plugin.
+    # Report 0 here because the real usage metric is the DB entry count.
+    return 0.0
+
+
+def _db_usage_pct(store) -> float:
+    """Return cognitive DB usage as a percentage of a soft entry limit."""
+    if not store:
+        return 0.0
+    try:
+        total = store.count()
+    except Exception:
+        return 0.0
+    limit = 100
+    if total <= 0 or limit <= 0:
+        return 0.0
+    return round((total / limit) * 100, 1)
 
 
 # ── HTTP handlers ─────────────────────────────────────────────────────────────
@@ -262,7 +286,7 @@ def handle_cognitive_get(handler, parsed=None) -> None:
             "available": True,
             "db_path": str(_db_path(home)),
             "memories": payload,
-            "stats": _stats(store, decay_module, params, now),
+            "stats": _stats(store, decay_module, params, now, home),
             "prune_log": _read_prune_log(home),
         },
     )
@@ -358,14 +382,14 @@ def _handle_sync_action(handler, body, store, home: Path, apply: bool) -> None:
     hermes_home = _resolve_hermes_home()
     sync = sync_module.BuiltinMemorySync(hermes_home, store, params, {})
 
-    limits = {"memory": 2200, "user": 1375}
+    limits = {"memory": 3500, "user": 1750}
     try:
         from api.config import get_config_snapshot
         cfg = get_config_snapshot()
         mem_cfg = cfg.get("memory") if isinstance(cfg, dict) else {}
         if isinstance(mem_cfg, dict):
-            limits["memory"] = int(mem_cfg.get("memory_char_limit", 2200))
-            limits["user"] = int(mem_cfg.get("user_char_limit", 1375))
+            limits["memory"] = int(mem_cfg.get("memory_char_limit", 3500))
+            limits["user"] = int(mem_cfg.get("user_char_limit", 1750))
     except Exception:
         pass
 

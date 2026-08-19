@@ -237,3 +237,15 @@ class TestCancelledTurnPersistenceGuards:
         assert "_cancel_event_payload('Cancelled by user', session=" not in worker_block
         assert "None if ephemeral else s" not in worker_block
         assert "_cancel_event_payload('Cancelled by user', session=_cancel_session_payload)" in cancel_stream_block
+
+
+class TestCancelledTurnUsedModelStamp:
+    def test_used_model_stamped_on_cancel_marker(self):
+        session = _DummySession()
+        _finalize_cancelled_turn(session, ephemeral=False, used_model="big-pickle")
+        assert session.messages[-1].get("_usedModel") == "big-pickle"
+
+    def test_no_used_model_key_when_not_provided(self):
+        session = _DummySession()
+        _finalize_cancelled_turn(session, ephemeral=False)
+        assert "_usedModel" not in session.messages[-1]

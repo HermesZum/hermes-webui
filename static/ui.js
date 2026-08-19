@@ -6767,6 +6767,24 @@ function _setMessageScrollToBottom(){
     _deferClearProgrammaticScroll();
   });
 }
+function _syncMemoryIndicator(stats){
+  const wrap=$('memoryIndicatorWrap');
+  const el=$('memoryIndicator');
+  if(!wrap||!el) return;
+  if(!stats || typeof stats.usage_pct !== 'number'){
+    wrap.style.display='none';
+    return;
+  }
+  wrap.style.display='';
+  const pct=Math.min(100, Math.max(0, Math.round(stats.usage_pct)));
+  const crit=typeof stats.critical==='number' ? stats.critical : 0;
+  el.textContent = crit > 0 ? `${pct}% ⚠${crit}` : `${pct}%`;
+  el.classList.remove('memory-mid','memory-high');
+  if(crit > 0) el.classList.add('memory-critical');
+  else if(pct > 90) el.classList.add('memory-high');
+  else if(pct > 75) el.classList.add('memory-mid');
+  wrap.title = `Cognitive memory: ${pct}% of entry limit · ${crit} critical safety rule(s)`;
+}
 function _isMessagePaneNearBottom(threshold=250){
   const el=$('messages');
   if(!el) return false;
