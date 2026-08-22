@@ -3935,3 +3935,28 @@ function _showServerStopped() {
   var stoppedMsg = (typeof t === 'function' ? t('settings_shutdown_stopped_message') : 'Server stopped. You can close this tab.');
   document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--muted);font-family:var(--font-ui);font-size:14px"><p>' + stoppedMsg + '</p></div>';
 }
+
+// Phase 3b: render an intelligence score suffix for a model picker option.
+// The backend attaches `intelligence` (Artificial Analysis Intelligence Index,
+// a real 0-100 capability score when the AA key is configured) and `is_free`.
+// Models the AA catalog doesn't index return intelligence = null -> 'unrated'.
+// Used only inside <option> list text; the selected-chip label is left clean.
+function modelIntelligenceSuffix(m) {
+  if (!m || typeof m !== 'object') return '';
+  var intel = m.intelligence;
+  var isFree = m.is_free === true;
+  // The score is resolved by normalizing the model id against the Artificial
+  // Analysis catalog (':free' and size/quant/variant tokens are folded so free
+  // and size-variant models still resolve to a real score). Models AA simply
+  // doesn't index (e.g. poolside/laguna, dots-3-note) stay unranked.
+  var parts = [];
+  if (isFree) parts.push('FREE');
+  if (typeof intel === 'number' && isFinite(intel)) {
+    parts.push(String(Math.round(intel)));
+  } else if (intel === null || intel === undefined) {
+    parts.push('unrated');
+  }
+  if (!parts.length) return '';
+  return '  ·  ' + parts.join(' · ');
+}
+window.modelIntelligenceSuffix = modelIntelligenceSuffix;

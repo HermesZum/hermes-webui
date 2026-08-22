@@ -7384,3 +7384,61 @@ html[data-conversation-outline="enabled"] #outlineToggleBtn:not([hidden]){displa
 .cognitive-sync-remove .cognitive-sync-icon{color:#f85149}
 .cognitive-sync-reason{color:var(--muted);flex-shrink:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cognitive-sync-preview{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ============================================================================
+ * Token Telemetry panel — CSS (Memory panel)
+ * Append to static/style.css using theme variables so light/dark + skins work.
+ * ========================================================================== */
+.tt-section-title {
+  margin: 14px 0 6px;
+  font-size: 0.95em;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.tt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85em;
+  margin-bottom: 8px;
+}
+.tt-table th, .tt-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: left;
+}
+.tt-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+.tt-session-id {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tt-model-list {
+  margin: 4px 0 8px;
+}
+.tt-model-row {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85em;
+}
+.tt-model-name {
+  flex: 1;
+  font-family: monospace;
+  color: var(--accent);
+}
+.tt-foot {
+  margin-top: 10px;
+  font-size: 0.75em;
+  color: var(--muted);
+}
+.tt-foot code {
+  background: var(--code-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+}

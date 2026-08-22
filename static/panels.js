@@ -1746,7 +1746,7 @@ async function _populateCronFormModelSelect(selectedModel, selectedProvider, dis
         if (!m || !m.id) continue;
         const opt = document.createElement('option');
         opt.value = m.id;
-        opt.textContent = m.label || m.id;
+        opt.textContent = (m.label || m.id) + (typeof modelIntelligenceSuffix==='function'?modelIntelligenceSuffix(m):'');
         if (g.provider_id) opt.dataset.provider = g.provider_id;
         og.appendChild(opt);
       }
@@ -5252,6 +5252,7 @@ const MEMORY_SECTIONS = [
   { key: 'cognitive', label: 'Cognitive Memory', empty: '', iconKey: 'book-open', readOnly: true },
   { key: 'forge', label: 'Forge Tools', empty: '', iconKey: 'wrench', readOnly: true },
   { key: 'guardrails', label: 'Guardrails', empty: '', iconKey: 'shield', readOnly: true },
+  { key: 'token_telemetry', label: 'Token Telemetry', empty: '', iconKey: 'zap', readOnly: true }, 
   { key: 'project_context', label: 'Project Context', empty: 'No project context file found for this workspace.', iconKey: 'file-text', readOnly: true },
   { key: 'external_notes', labelKey: 'external_notes_sources', emptyKey: 'external_notes_empty', iconKey: 'book-open' },
 ];
@@ -5402,7 +5403,12 @@ function _renderMemoryDetail(section) {
     if (!_guardrailsData) _loadGuardrailsData();
     return;
   }
-
+  if (section === 'token_telemetry') {
+    _renderTokenTelemetryDetail();
+    if (!_tokenTelemetryData) _loadTokenTelemetryData();
+    return;
+  }
+  
   const meta = _memorySectionMeta(section);
   const title = $('memoryDetailTitle');
   const body = $('memoryDetailBody');
@@ -5556,10 +5562,13 @@ function _renderCognitiveMemoryDetail() {
     </div>
     <div class="cognitive-stats">${chips}</div>
     <div id="cognitiveAddForm" style="${_cognitiveAddOpen ? '' : 'display:none'}"></div>
-    <details class="cognitive-sync" ${_cognitiveSyncOpen ? 'open' : ''}>
-      <summary onclick="cognitiveToggleSync()">Compact built-in memory (MEMORY.md / USER.md)</summary>
-      <div id="cognitiveSyncBody" class="cognitive-sync-body"></div>
-    </details>
+    <div class="cognitive-sync-note">
+      <strong>Memory compaction:</strong> built-in <code>MEMORY.md</code>/<code>USER.md</code> files are
+      stubs (~82 bytes) — the live store is the cognitive DB (<code>memory.db</code>). To dedupe/trim the
+      DB run the <code>cognitive-memory-compact</code> skill:
+      <code>python3 ~/.hermes/skills/productivity/cognitive-memory-compact/scripts/compact.py</code>
+      (dry-run first, then <code>--apply</code>).
+    </div>
     ${listHtml}
     ${pruneLog}
   </div>`;
@@ -5635,120 +5644,6 @@ function cognitiveToggleAdd() {
   _cognitiveAddOpen = !_cognitiveAddOpen;
   if (!_cognitiveAddOpen) _cognitiveAddDraft = '';
   _renderCognitiveMemoryDetail();
-}
-
-// ── Built-in memory sync (cognitive_sync_memory) ─────────────────────────
-
-function cognitiveToggleSync() {
-  _cognitiveSyncOpen = !_cognitiveSyncOpen;
-  if (_cognitiveSyncOpen && !_cognitiveSyncPlan) {
-    cognitiveSyncPlan('both');
-  }
-}
-
-async function cognitiveSyncPlan(target) {
-  const bodyEl = $('cognitiveSyncBody');
-  if (!bodyEl) return;
-  if (_cognitiveBusy) return;
-  _cognitiveBusy = true;
-  bodyEl.innerHTML = '<div class="memory-empty">Building plan…</div>';
-  try {
-    const res = await api('/api/memory/cognitive', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'sync_plan', target: target }),
-      redirect401: false, timeoutToast: false,
-    });
-    if (!res || !res.ok) {
-      bodyEl.innerHTML = `<div class="memory-empty">${esc((res && res.error) ? res.error : 'Plan failed')}</div>`;
-      return;
-    }
-    _cognitiveSyncPlan = res;
-    _renderCognitiveSyncPlan(bodyEl);
-  } catch (e) {
-    bodyEl.innerHTML = `<div class="memory-empty">${esc((e && e.message) ? e.message : String(e))}</div>`;
-  } finally {
-    _cognitiveBusy = false;
-  }
-}
-
-function _renderCognitiveSyncPlan(bodyEl) {
-  const plan = _cognitiveSyncPlan;
-  if (!plan || !Array.isArray(plan.results)) {
-    bodyEl.innerHTML = '<div class="memory-empty">No plan available.</div>';
-    return;
-  }
-  const rows = plan.results.map(r => {
-    const p = r.plan || {};
-    const counts = p.counts || {};
-    const badge = (action, count) => {
-      if (!count) return '';
-      const cls = action === 'keep' ? 'cognitive-sync-keep'
-                : action === 'compact' ? 'cognitive-sync-compact'
-                : 'cognitive-sync-remove';
-      return `<span class="${cls}">${action}: ${count}</span>`;
-    };
-    const items = (p.decisions || []).map(d => {
-      const icon = d.action === 'keep' ? '✔' : d.action === 'compact' ? '↘' : '✖';
-      return `<li class="cognitive-sync-item cognitive-sync-${d.action}">
-        <span class="cognitive-sync-icon">${icon}</span>
-        <span class="cognitive-sync-reason">${esc(d.reason)}</span>
-        <span class="cognitive-sync-preview">${esc((d.entry_preview || '').slice(0, 70))}</span>
-      </li>`;
-    }).join('');
-    return `<div class="cognitive-sync-target">
-      <div class="cognitive-sync-head">
-        <strong>${esc(p.target || '')}.md</strong>
-        <span class="cognitive-meta">${esc(p.usage_pct || 0)}% of ${esc(p.limit || '')}-char limit</span>
-        ${badge('keep', counts.keep)}${badge('compact', counts.compact)}${badge('remove', counts.remove)}
-      </div>
-      <ul class="cognitive-sync-list">${items || '<li class="cognitive-meta">No entries.</li>'}</ul>
-    </div>`;
-  }).join('');
-  bodyEl.innerHTML = `
-    <div class="cognitive-sync-desc">Cross-references the cognitive store. Critical rules (corrections/preferences), pinned memories, and un-mirrored entries are always kept. Only redundant non-critical entries are compacted or removed.</div>
-    <div class="cognitive-sync-actions">
-      <button type="button" class="btn-secondary" onclick="cognitiveSyncApply()">Apply compaction</button>
-      <button type="button" class="btn-secondary" onclick="cognitiveSyncPlan('both')">Refresh plan</button>
-    </div>
-    ${rows}`;
-}
-
-async function cognitiveSyncApply() {
-  if (_cognitiveBusy) return;
-  const plan = _cognitiveSyncPlan;
-  if (!plan) return;
-  const total = (plan.results || []).reduce((acc, r) => {
-    const c = (r.plan || {}).counts || {};
-    return acc + (c.compact || 0) + (c.remove || 0);
-  }, 0);
-  if (total === 0) {
-    alert('Nothing to compact — all entries are already kept.');
-    return;
-  }
-  if (!confirm(`Apply compaction? ${total} entry/entries will be removed or shortened from the built-in memory files.\n\nA backup is created first and every change is logged to the prune log.`)) {
-    return;
-  }
-  _cognitiveBusy = true;
-  const bodyEl = $('cognitiveSyncBody');
-  try {
-    const res = await api('/api/memory/cognitive', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'sync_apply', target: plan.target || 'both' }),
-      redirect401: false, timeoutToast: false,
-    });
-    if (!res || !res.ok) {
-      alert((res && res.error) ? res.error : 'Apply failed');
-      return;
-    }
-    _cognitiveSyncPlan = null;
-    alert('Compaction applied. Restart Hermes (or the WebUI service) so the running agent picks up the new memory files.');
-    await _loadCognitiveData(true);
-    if (bodyEl) bodyEl.innerHTML = '<div class="memory-empty">Compaction applied. Refresh the plan to see the new state.</div>';
-  } catch (e) {
-    alert((e && e.message) ? e.message : String(e));
-  } finally {
-    _cognitiveBusy = false;
-  }
 }
 
 function cognitiveAddContentTyped(v) {
@@ -9481,6 +9376,8 @@ function _preferencesPayloadFromUi(){
   if(showUsageCb) payload.show_token_usage=showUsageCb.checked;
   const showQuotaChipCb=$('settingsShowQuotaChip');
   if(showQuotaChipCb) payload.show_quota_chip=showQuotaChipCb.checked;
+  const freeFirstCb=$('settingsFreeFirst');
+  if(freeFirstCb) payload.free_first=freeFirstCb.checked;
   const showConversationOutlineCb=$('settingsShowConversationOutline');
   if(showConversationOutlineCb) payload.show_conversation_outline=showConversationOutlineCb.checked;
   const hideSuggestionsCb=$('settingsHideSuggestions');
@@ -10157,6 +10054,17 @@ async function loadSettingsPanel(){
       showQuotaChipCb.addEventListener('change',()=>{
         window._showQuotaChip=showQuotaChipCb.checked;
         if(typeof refreshProviderQuotaIndicator==='function') refreshProviderQuotaIndicator();
+        _schedulePreferencesAutosave();
+      },{once:false});
+    }
+    // Free-first model picker toggle (Phase 2). When on, the backend floats free
+    // models to the top and sorts them by intelligence (Artificial Analysis when
+    // configured, otherwise the curated proxy). The picker re-renders from the
+    // reordered /api/models payload on save, so no JS sort is needed here.
+    const freeFirstCb=$('settingsFreeFirst');
+    if(freeFirstCb){
+      freeFirstCb.checked=settings.free_first===true;
+      freeFirstCb.addEventListener('change',()=>{
         _schedulePreferencesAutosave();
       },{once:false});
     }
@@ -14222,4 +14130,131 @@ function updateNotificationPermissionStatus(){
     btn.setAttribute('aria-disabled', granted?'true':'false');
   }
   if(btnWrap) btnWrap.title=label;
+}
+/* ============================================================================
+ * Token Telemetry panel (hermes-token-telemetry plugin) — Memory panel section
+ * ----------------------------------------------------------------------------
+ * To wire into the Hermes WebUI:
+ *   1. panels.js:  add to MEMORY_SECTIONS
+ *        { key: 'token_telemetry', label: 'Token Telemetry', empty: '', iconKey: 'zap', readOnly: true }
+ *   2. panels.js:  in _renderMemoryDetail, add
+ *        if (section === 'token_telemetry') {
+ *          _renderTokenTelemetryDetail();
+ *          if (!_tokenTelemetryData) _loadTokenTelemetryData();
+ *          return;
+ *        }
+ *   3. This whole block is referenced below the other plugin detail sections.
+ * All dynamic strings are escaped with esc() — never inject raw store text.
+ * ========================================================================== */
+
+let _tokenTelemetryData = null;
+let _tokenTelemetryBusy = false;
+
+async function _loadTokenTelemetryData(force) {
+  if (_tokenTelemetryBusy && !force) return;
+  _tokenTelemetryBusy = true;
+  try {
+    _tokenTelemetryData = await api('/api/token-telemetry', { cache: 'no-store', timeoutMs: 15000 });
+  } catch (e) {
+    _tokenTelemetryData = { available: false, reason: (e && e.message) ? e.message : String(e) };
+  } finally {
+    _tokenTelemetryBusy = false;
+  }
+  _renderTokenTelemetryDetail();
+}
+
+function _fmtTokens(n) {
+  n = Number(n) || 0;
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+
+function _fmtCacheRate(r) {
+  r = Number(r) || 0;
+  return (r * 100).toFixed(1) + '%';
+}
+
+function _ttUnavailable(body, empty, reason) {
+  body.innerHTML = `<div class="main-view-content"><div class="memory-empty">Token telemetry unavailable: ${esc(reason || 'unknown error')}</div></div>`;
+  body.style.display = '';
+  if (empty) empty.style.display = 'none';
+}
+
+function _renderTokenTelemetryDetail() {
+  const title = $('memoryDetailTitle');
+  const body = $('memoryDetailBody');
+  const empty = $('memoryDetailEmpty');
+  if (!title || !body) return;
+  title.textContent = 'Token Telemetry';
+  const data = _tokenTelemetryData;
+
+  if (!data) {
+    body.innerHTML = '<div class="main-view-content"><div class="memory-empty">Loading…</div></div>';
+    body.style.display = '';
+    if (empty) empty.style.display = 'none';
+    return;
+  }
+  if (data.available === false) {
+    _ttUnavailable(body, empty, data.reason);
+    return;
+  }
+
+  const g = data.global || {};
+  const cacheHit = _fmtCacheRate(g.cache_hit_rate);
+  const chips = `
+    <span class="detail-badge">${_fmtTokens(g.total_tokens)} tokens</span>
+    <span class="detail-badge">${g.api_calls || 0} calls</span>
+    <span class="detail-badge">cache-hit ${cacheHit}</span>
+    <span class="detail-badge">${g.sessions || 0} sessions</span>
+  `;
+
+  // Per-session table (recent rollups)
+  const sessions = (data.sessions || []);
+  const sessRows = sessions.length ? sessions.map(s => `
+    <tr>
+      <td title="${esc(s.session_id || '')}" class="tt-session-id">${esc((s.session_id || '').slice(0, 24))}</td>
+      <td>${_fmtTokens(s.total_prompt)}</td>
+      <td>${_fmtTokens(s.total_completion)}</td>
+      <td>${_fmtTokens(s.total_cache_read)}</td>
+      <td>${s.turn_count || 0}</td>
+      <td>${s.total_tool_calls || 0}</td>
+    </tr>`).join('') : `<tr><td colspan="6" class="memory-empty">No sessions tracked yet.</td></tr>`;
+
+  // Tool-result offenders (context bloat)
+  const tools = (data.top_tools || []);
+  const toolRows = tools.length ? tools.map(t => `
+    <tr>
+      <td><code>${esc(t.tool_name)}</code></td>
+      <td>${t.calls || 0}</td>
+      <td>${_fmtTokens(t.total_chars)} chars</td>
+      <td>${_fmtTokens(t.max_chars)} max</td>
+    </tr>`).join('') : `<tr><td colspan="4" class="memory-empty">No tool results tracked yet.</td></tr>`;
+
+  body.innerHTML = `
+    <div class="main-view-content">
+      <div class="cognitive-controls">
+        <span class="cognitive-stats">${chips}</span>
+        <button type="button" class="btn-secondary" onclick="_loadTokenTelemetryData(true)">Refresh</button>
+      </div>
+      <h4 class="tt-section-title">By model</h4>
+      <div class="tt-model-list">${(data.models || []).map(m => `
+        <div class="tt-model-row">
+          <span class="tt-model-name">${esc(m.model)}</span>
+          <span>${m.calls} calls</span>
+          <span>${_fmtTokens(m.total_tokens)} tokens</span>
+        </div>`).join('') || '<div class="memory-empty">No model data.</div>'}</div>
+      <h4 class="tt-section-title">Recent sessions</h4>
+      <table class="tt-table"><thead><tr>
+        <th>Session</th><th>Prompt</th><th>Completion</th><th>Cache read</th><th>Turns</th><th>Tools</th>
+      </tr></thead><tbody>${sessRows}</tbody></table>
+      <h4 class="tt-section-title">Top tool-result offenders</h4>
+      <table class="tt-table"><thead><tr>
+        <th>Tool</th><th>Calls</th><th>Total chars</th><th>Max result</th>
+      </tr></thead><tbody>${toolRows}</tbody></table>
+      <div class="tt-foot">DB: <code>${esc(data.db_path || '')}</code></div>
+    </div>`;
+  body.style.display = '';
+  if (empty) empty.style.display = 'none';
 }

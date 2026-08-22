@@ -3474,7 +3474,7 @@ async function populateModelDropdown(opts={}){
       for(const m of (Array.isArray(g.models)?g.models:[])){
         const opt=document.createElement('option');
         opt.value=m.id;
-        opt.textContent=m.label;
+        opt.textContent=(m.label||m.id) + (typeof modelIntelligenceSuffix==='function'?modelIntelligenceSuffix(m):'');
         if(m && (m.supports_fast_tier === true || String(m.supports_fast_tier).toLowerCase()==='true')){
           opt.dataset.fast='1';
         }else if(m && (m.supports_fast_tier === false || String(m.supports_fast_tier).toLowerCase()==='false')){
@@ -3593,7 +3593,7 @@ function _addLiveModelsToSelect(provider, models, sel){
     }
     const opt=document.createElement('option');
     opt.value=mid;
-    opt.textContent=m.label||m.id;
+    opt.textContent=(m.label||m.id) + (typeof modelIntelligenceSuffix==='function'?modelIntelligenceSuffix(m):'');
     opt.title='Live model — fetched from provider';
     opt.dataset.provider=provider;
     if(m && (m.supports_fast_tier === true || String(m.supports_fast_tier).toLowerCase()==='true')){
@@ -3962,7 +3962,7 @@ function _appendOverflowOptionsToGroup(group, extraModels){
     }
     const opt=document.createElement('option');
     opt.value=m.id;
-    opt.textContent=m.label||m.id;
+    opt.textContent=(m.label||m.id) + (typeof modelIntelligenceSuffix==='function'?modelIntelligenceSuffix(m):'');
     group.appendChild(opt);
     appended++;
   }
@@ -4474,6 +4474,11 @@ function renderModelDropdown(){
           }
         }
         const badgeHtml=m.badge?`<span class="model-opt-badge model-opt-badge--${esc(m.badge.role||'configured')}">${esc(badgeLabel)}</span>`:'';
+        // Phase 3b: render the Intel rating (and FREE flag) on the Configured
+        // section row, matching what the group <option>s already show. The badge
+        // payload now carries `intelligence`/`is_free` from the picker groups.
+        const _intelSuffix=(typeof modelIntelligenceSuffix==='function' && m.badge)?modelIntelligenceSuffix(m.badge):'';
+        if(_intelSuffix) modelName=modelName+_intelSuffix;
         row.innerHTML=`<div class="model-opt-top"><span class="model-opt-name">${esc(modelName)}</span>${badgeHtml}${_selectedModelBadge(m)}</div><span class="model-opt-id">${esc(m.id)}</span>`;
         row.onclick=()=>selectFromDropdown(m.value,(m.badge&&m.badge.provider)||m.providerId||null);
         dd.appendChild(row);

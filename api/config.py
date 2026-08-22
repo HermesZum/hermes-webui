@@ -5118,6 +5118,27 @@ def _configured_model_badges_from_static_catalog(
     for opt_id in option_ids:
         norm_lookup.setdefault(_norm_static_model_id(opt_id), []).append(opt_id)
 
+    # Phase 3b: index the Artificial Analysis intelligence + is_free that the
+    # picker groups already carry, so the "Configured" badge payloads can surface
+    # the same Intel rating the group <option>s do (#configured-intel).
+    intel_lookup: dict[str, dict] = {}
+    for g in groups:
+        if not isinstance(g, dict):
+            continue
+        for m in g.get("models", []) or []:
+            if not isinstance(m, dict):
+                continue
+            mid = m.get("id")
+            if not mid:
+                continue
+            intel = m.get("intelligence")
+            is_free = m.get("is_free")
+            if intel is not None or is_free is not None:
+                intel_lookup[str(mid)] = {
+                    "intelligence": intel,
+                    "is_free": bool(is_free) if is_free is not None else None,
+                }
+
     badges: dict[str, dict[str, str]] = {}
     for entry in configured_entries:
         provider = entry["provider"]
@@ -5154,6 +5175,19 @@ def _configured_model_badges_from_static_catalog(
             "label": entry["label"],
             "provider": provider,
         }
+        # Phase 3b: forward the Intel rating + free flag the picker groups already
+        # expose, so the Configured section can render it too.
+        _intel_info = intel_lookup.get(match_id) if match_id else None
+        if not _intel_info and match_id is None:
+            for _c in raw_candidates:
+                if _c in intel_lookup:
+                    _intel_info = intel_lookup[_c]
+                    break
+        if _intel_info:
+            if _intel_info.get("intelligence") is not None:
+                badge_payload["intelligence"] = _intel_info["intelligence"]
+            if _intel_info.get("is_free") is not None:
+                badge_payload["is_free"] = _intel_info["is_free"]
         for candidate in raw_candidates:
             candidate_provider = option_provider_lookup.get(candidate)
             if candidate_provider and candidate_provider != provider:
@@ -6550,6 +6584,12 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
         active_provider = None
         default_model = get_effective_default_model(cfg)
         groups = []
+        # Phase 2: free-first opt-in setting, resolved once per build.
+        _free_first_setting = False
+        try:
+            _free_first_setting = bool(load_settings().get("free_first", False))
+        except Exception:
+            _free_first_setting = False
 
         def _norm_model_id(model_id: str) -> str:
             s = str(model_id or "").strip().lower()
@@ -6622,6 +6662,26 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                 for m in g.get("models", [])
                 if m.get("id")
             }
+            # Phase 3b: index the Artificial Analysis intelligence + is_free that
+            # the picker groups already carry, so the "Configured" badge payloads
+            # can surface the same Intel rating the group <option>s do (#configured-intel).
+            intel_lookup: dict[str, dict] = {}
+            for g in groups:
+                if not isinstance(g, dict):
+                    continue
+                for m in g.get("models", []) or []:
+                    if not isinstance(m, dict):
+                        continue
+                    mid = m.get("id")
+                    if not mid:
+                        continue
+                    intel = m.get("intelligence")
+                    is_free = m.get("is_free")
+                    if intel is not None or is_free is not None:
+                        intel_lookup[str(mid)] = {
+                            "intelligence": intel,
+                            "is_free": bool(is_free) if is_free is not None else None,
+                        }
             norm_lookup: dict[str, list[str]] = {}
             for opt_id in option_ids:
                 norm_lookup.setdefault(_norm_model_id(opt_id), []).append(opt_id)
@@ -6660,6 +6720,19 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                             break
 
                 badge_payload = {"role": entry["role"], "label": entry["label"], "provider": provider}
+                # Phase 3b: forward the Intel rating + free flag the picker groups
+                # already expose, so the Configured section can render it too.
+                _intel_info = intel_lookup.get(match_id) if match_id else None
+                if not _intel_info and match_id is None:
+                    for _c in raw_candidates:
+                        if _c in intel_lookup:
+                            _intel_info = intel_lookup[_c]
+                            break
+                if _intel_info:
+                    if _intel_info.get("intelligence") is not None:
+                        badge_payload["intelligence"] = _intel_info["intelligence"]
+                    if _intel_info.get("is_free") is not None:
+                        badge_payload["is_free"] = _intel_info["is_free"]
                 for candidate in raw_candidates:
                     candidate_provider = option_provider_lookup.get(candidate)
                     if candidate_provider and candidate_provider != provider:
@@ -7427,6 +7500,34 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                             ).strip().lower()
                             == "priority"
                         )
+                # Phase 3b: attach real intelligence score (Artificial Analysis) + is_free.
+                # Fail-safe: any error => entries keep their existing fields only.
+                try:
+                    from api.aa_intelligence import lookup_intelligence as _aa_lookup
+                    for _model in picker_models:
+                        if not isinstance(_model, dict):
+                            continue
+                        _model_id = str(_model.get("id") or "").strip()
+                        if not _model_id:
+                            continue
+                        _intel = _aa_lookup(_model_id, provider_id)
+                        if _intel is not None:
+                            _model["intelligence"] = _intel
+                        _is_free = _model_id.endswith(":free") or _model_id == "openrouter/free"
+                        _model["is_free"] = _is_free
+                    # Free-first + intelligence sort when requested (opt-in).
+                    if _free_first_setting and picker_models:
+                        def _sort_key(_m):
+                            _mid = str(_m.get("id") or "")
+                            _intel = _m.get("intelligence")
+                            return (
+                                0 if _m.get("is_free") else 1,
+                                -( _intel if isinstance(_intel, (int, float)) else -1 ),
+                                str(_m.get("label") or _mid).lower(),
+                            )
+                        picker_models.sort(key=_sort_key)
+                except Exception as _enrich_err:
+                    logger.debug("Phase 3b enrichment skipped: %s", _enrich_err)
                 if apply_prefix:
                     picker_models = _apply_provider_prefix(picker_models, provider_id, active_provider)
                 visible_models, extra_models = _split_picker_overflow_models(
@@ -7550,6 +7651,13 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                             _is_free = _is_free or _mid.endswith(":free")
                             if not _is_free:
                                 continue
+                            # Phase 0 tool gate: OpenRouter free variants that do NOT
+                            # advertise `tools` in supported_parameters cannot serve
+                            # as the Hermes main model (the agent requires tool
+                            # calling) and previously 404'd when selected. Flag them
+                            # but keep them out of the selectable free list.
+                            _sp = _item.get("supported_parameters") or []
+                            _has_tools = "tools" in _sp
                             _name = (
                                 str(_item.get("name") or "").strip() or _mid
                             )
@@ -7557,6 +7665,13 @@ def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = Fa
                             _label = _name.split("/")[-1] if "/" in _name else _name
                             if "(free)" not in _label.lower():
                                 _label = f"{_label} (free)"
+                            if not _has_tools:
+                                if "(no tools)" not in _label.lower():
+                                    _label = f"{_label} (no tools)"
+                                # Skip tool-incapable free models from the selectable
+                                # picker entirely; they remain discoverable via the
+                                # agent's /model command for non-tool auxiliary use.
+                                continue
                             _entry = {"id": _mid, "label": _label}
                             free_tier_models.append(_entry)
                             if _model_matches_picker_selection(
@@ -9323,6 +9438,11 @@ _SETTINGS_DEFAULTS = {
     "hide_composer_status": False,  # hide status text in composer footer
     "hide_composer_context": False,  # hide context indicator in composer footer/mobile config panel
     "hide_composer_bg_badge": False,  # hide background-jobs badge in composer footer
+    # Phase 2: free-first model picker. When on, free models float to the top
+    # and are sorted by intelligence (Artificial Analysis when configured,
+    # otherwise the curated proxy). Opt-in; default off to avoid surprising
+    # users who pay for premium models.
+    "free_first": False,  # float free models to top of the picker, sorted by intelligence
     "pinned_sessions_limit": 3,  # maximum active pinned sessions shown in the sidebar
     "inflight_state_max_sessions": 8,  # max active-stream recovery snapshots kept in browser localStorage
     "inflight_state_max_messages": 24,  # max recent messages kept per recovery snapshot

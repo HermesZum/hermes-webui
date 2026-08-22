@@ -12166,6 +12166,33 @@ _INDEX_SHELL_CACHE: dict = {}
 _INDEX_SHELL_CACHE_LOCK = threading.Lock()
 
 
+def _static_version_token() -> str:
+    """Fingerprint for cache-busting static asset URLs (the `?v=` token).
+
+    Built from WEBUI_VERSION plus a short hash of the cacheable static files
+    (ui.js, panels.js, boot.js, index.html, i18n.js, style.css). When any of
+    those files changes on disk, the fingerprint changes, so the asset URL
+    changes and browsers re-fetch instead of serving the old immutable copy.
+    This does NOT alter WEBUI_VERSION itself (update checks use that directly).
+    """
+    from urllib.parse import quote
+    try:
+        from api.updates import WEBUI_VERSION
+        static_root = api_config.get_static_root()
+        hashed = []
+        for _name in ("ui.js", "panels.js", "boot.js", "index.html", "i18n.js", "style.css"):
+            _p = (static_root / _name)
+            if _p.exists():
+                import hashlib
+                _h = hashlib.sha1()
+                _h.update(_p.read_bytes())
+                hashed.append(_h.hexdigest()[:10])
+        _suffix = "-" + "".join(hashed) if hashed else ""
+        return quote(str(WEBUI_VERSION or "dev") + _suffix, safe="")
+    except Exception:
+        return quote(str(WEBUI_VERSION or "dev"), safe="")
+
+
 def _render_index_shell_base() -> str:
     """Return static/index.html with the process-constant tokens substituted.
 
@@ -12184,9 +12211,17 @@ def _render_index_shell_base() -> str:
             return cached[1]
     from urllib.parse import quote
 
-    version_token = quote(WEBUI_VERSION, safe="")
+    version_token = _static_version_token()
+    from api.updates import WEBUI_VERSION
+    bundle_version = quote(str(WEBUI_VERSION or "dev"), safe="")
     base = (
         index_path.read_text(encoding="utf-8")
+        # Identity version for stale-client skew detection: must equal the
+        # server's settings.webui_version (plain WEBUI_VERSION). Do NOT use the
+        # hash-bearing version_token here, or every client shows a false
+        # "different version" banner after a static edit.
+        .replace("__WEBUI_BUNDLE_VERSION__", bundle_version)
+        # Asset cache-bust URLs: hash-bearing token is correct here.
         .replace("__WEBUI_VERSION__", version_token)
         .replace("__MAX_UPLOAD_BYTES__", str(MAX_UPLOAD_BYTES))
     )
@@ -12268,7 +12303,7 @@ def handle_get(handler, parsed) -> bool:
         ]
         from urllib.parse import quote
         from api.updates import WEBUI_VERSION
-        version_token = quote(WEBUI_VERSION, safe="")
+        version_token = _static_version_token()
         _page = (
             _LOGIN_PAGE_HTML.replace("{{BOT_NAME}}", _bn)
             .replace("{{BOT_NAME_INITIAL}}", _bn[0].upper())
@@ -12406,10 +12441,12 @@ def handle_get(handler, parsed) -> bool:
         sw_path = (static_root / "sw.js").resolve()
         if sw_path.exists():
             # Inject the current git-derived version as the cache name so the
-            # service worker cache busts automatically on every new deploy.
+            # service worker cache busts automatically on every new deploy. This
+            # is a cache NAME, not an asset URL, so it must stay the plain
+            # WEBUI_VERSION (not the hash-bearing version_token).
             from urllib.parse import quote
             from api.updates import WEBUI_VERSION
-            version_token = quote(WEBUI_VERSION, safe="")
+            version_token = quote(str(WEBUI_VERSION or "dev"), safe="")
             text = sw_path.read_text(encoding="utf-8").replace(
                 "__WEBUI_VERSION__", version_token
             )
@@ -13888,6 +13925,20 @@ def handle_get(handler, parsed) -> bool:
         from api.guardrails_bridge import handle_guardrails_get
 
         handle_guardrails_get(handler, parsed)
+        return True
+
+
+    # ── Token telemetry (GET) — hermes-token-telemetry plugin store ──
+    if parsed.path == "/api/token-telemetry":
+        from api.token_telemetry_bridge import handle_token_telemetry_get
+
+        handle_token_telemetry_get(handler, parsed)
+        return True
+
+    if parsed.path == "/api/token-telemetry/session":
+        from api.token_telemetry_bridge import handle_token_telemetry_session_get
+
+        handle_token_telemetry_session_get(handler, parsed)
         return True
 
     # ── Profile API (GET) ──
@@ -20116,6 +20167,46 @@ def _handle_clarify_inject(handler, parsed):
     return j(handler, {"error": "session_id required"}, status=400)
 
 
+def _live_models_with_tools(provider: str, ids: list[str]) -> list[str] | None:
+    """Return only the ids that advertise `tools` support, or None if unknown.
+
+    Fetches the provider's /v1/models payload once and inspects
+    supported_parameters. Returns None (caller keeps the full list) when the
+    payload is unavailable/unsupported, so a transient failure never strips
+    valid models. Fail-safe by design.
+    """
+    try:
+        import json as _json
+        import urllib.request as _urlreq
+        _ep = _OPENAI_COMPAT_ENDPOINTS.get(provider)
+        if not _ep:
+            # For aggregators without a static endpoint, probe the canonical host.
+            _hosts = {
+                "openrouter": "https://openrouter.ai/api/v1/models",
+                "kilocode": "https://api.kilo.ai/api/gateway/v1/models",
+                "nous": "https://inference-api.nousresearch.com/v1/models",
+                "zai": "https://api.z.ai/api/v1/models",
+            }
+            _ep = _hosts.get(provider)
+        if not _ep:
+            return None
+        _req = _urlreq.Request(_ep, headers={"Accept": "application/json"})
+        with _urlreq.urlopen(_req, timeout=8.0) as _resp:
+            _payload = _json.loads(_resp.read().decode())
+        _items = _payload.get("data", []) if isinstance(_payload, dict) else []
+        _tool_ok: dict[str, bool] = {}
+        for _it in _items:
+            if not isinstance(_it, dict):
+                continue
+            _mid = str(_it.get("id") or "").strip()
+            _sp = _it.get("supported_parameters") or []
+            _tool_ok[_mid] = ("tools" in _sp)
+        # Unknown ids (not in payload) are kept to avoid surprises.
+        return [mid for mid in ids if _tool_ok.get(mid, True)]
+    except Exception:
+        return None
+
+
 def _handle_live_models(handler, parsed):
     """Return the live model list for a provider.
 
@@ -20382,6 +20473,36 @@ def _handle_live_models(handler, parsed):
         if not ids:
             return _finish({"provider": provider, "models": [], "count": 0})
 
+        # ── Phase 0: respect providers.<pid>.models allowlist + tool gate ─────
+        # Settings/Providers previously returned the FULL live catalog here,
+        # ignoring the user's allowlist and surfacing tool-incapable free models
+        # (e.g. z-ai/glm-5.2:free) that 404 as a main agent model. When an
+        # allowlist is configured, restrict to it; for tool-requiring routers,
+        # drop entries that don't advertise `tools` in supported_parameters.
+        try:
+            _providers_cfg = cfg.get("providers") or {}
+            _prov_cfg = _providers_cfg.get(provider, {}) if isinstance(_providers_cfg, dict) else {}
+            _allowlist = None
+            if isinstance(_prov_cfg, dict) and "models" in _prov_cfg:
+                from api.config import _configured_model_ids as _cmi
+                _allowlist = set(_cmi(_prov_cfg["models"]))
+            if _allowlist is not None:
+                ids = [mid for mid in ids if mid in _allowlist]
+            # Tool gate: a model without `tools` in supported_parameters cannot
+            # serve as the Hermes main model (the agent requires tool calling).
+            # Keep them out of this selectable list; the proxy fallback covers
+            # non-tool tasks. Only applies to proxy-style providers that expose
+            # a /v1/models payload with supported_parameters.
+            _ROUTER_PROVIDERS = ("openrouter", "kilocode", "nous", "copilot",
+                                 "ai-gateway", "zai", "openai", "anthropic",
+                                 "google", "gemini", "deepseek", "xai", "grok")
+            if provider in _ROUTER_PROVIDERS:
+                _tool_capable = _live_models_with_tools(provider, ids)
+                if _tool_capable is not None:
+                    ids = _tool_capable
+        except Exception as _gate_err:
+            logger.debug("Phase 0 allowlist/tool gate skipped: %s", _gate_err)
+
         # Match the same dropdown visibility budget that /api/models uses so
         # background enrichment via _fetchLiveModels() does not re-append an
         # uncapped catalog after the initial picker render. The full catalog
@@ -20436,12 +20557,33 @@ def _handle_live_models(handler, parsed):
 
         annotate_fast_tier = _is_fast_tier_provider(provider)
         models_out = []
+        # Phase 3b: attach real Artificial Analysis intelligence + is_free so the
+        # Settings/Providers live widget can show the same scores the composer
+        # dropdown does. The live widget previously returned only {id,label}, so
+        # modelIntelligenceSuffix() had no intelligence to render and every model
+        # (kilocode included) showed 'unrated'. Fail-safe: any lookup error just
+        # omits the field for that model.
+        _aa_enabled = False
+        try:
+            from api.aa_intelligence import _enabled as _aa_is_enabled
+            _aa_enabled = _aa_is_enabled()
+        except Exception:
+            _aa_enabled = False
         for mid in ids:
             if not mid:
                 continue
             entry = {"id": mid, "label": _make_label(mid)}
             if annotate_fast_tier:
                 entry["supports_fast_tier"] = _model_supports_fast_tier_for_provider(mid, provider)
+            if _aa_enabled:
+                try:
+                    from api.aa_intelligence import lookup_intelligence as _aa_lookup
+                    _intel = _aa_lookup(mid, provider)
+                    if _intel is not None:
+                        entry["intelligence"] = _intel
+                    entry["is_free"] = (mid.endswith(":free") or mid == "openrouter/free")
+                except Exception:
+                    pass
             models_out.append(entry)
         return _finish({"provider": provider, "models": models_out,
                         "count": len(models_out)})
