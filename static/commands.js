@@ -873,6 +873,25 @@ async function _applyManualCompressionResult(data, focusTopic, visibleCount, com
       updateQueueBadge(S.session.session_id);
     }
   }
+  // #524-followup: /compress recomputes last_prompt_tokens (the post-compression
+  // token estimate) on the session, but the context-window pill is driven by
+  // S.lastUsage — a cache this path never refreshed. The pill kept showing the
+  // pre-compression percentage (and the "needs compress" hint) until the next
+  // turn. Rebuild S.lastUsage from the freshly-compressed session — preferring
+  // the new session token count over the stale cached usage — and re-sync the
+  // pill now so both the composer pill and the mobile context gadget update.
+  if(typeof _syncCtxIndicator==='function' && S.session){
+    const _u=S.lastUsage||{};
+    const _pickSess=(sv,cv,dflt=0)=>sv!=null?sv:(cv!=null?cv:dflt);
+    S.lastUsage={
+      ..._u,
+      context_length:S.session.context_length||0,
+      last_prompt_tokens:_pickSess(S.session.last_prompt_tokens,_u.last_prompt_tokens),
+      post_compression_context_tokens_estimate:S.session.post_compression_context_tokens_estimate,
+      threshold_tokens:S.session.threshold_tokens||0,
+    };
+    _syncCtxIndicator(S.lastUsage);
+  }
   const summary=data&&data.summary;
   if(typeof setCompressionUi==='function'&&S.session){
     const referenceMsg=(S.messages||[]).find(m=>typeof _isContextCompactionMessage==='function'&&_isContextCompactionMessage(m));
@@ -1053,7 +1072,7 @@ async function cmdUsage(){
 async function cmdMemorySync(){
   showToast(t('memory_sync_started'));
   try{
-    const res = await api('/api/memory/cognitive', {method:'POST', body:JSON.stringify({action:'sync_apply', target:'both'})});
+    const res = await api('/api/memory/cognitive', {method:'POST', body:JSON.stringify({action:'sync_apply', target:'both'}), redirect401:false, timeoutToast:false});
     if(!res || !res.ok){
       showToast(t('memory_sync_failed') + ': ' + ((res && res.error) ? res.error : 'unknown error'));
       return;
