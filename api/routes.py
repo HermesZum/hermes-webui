@@ -12170,17 +12170,30 @@ def _static_version_token() -> str:
     """Fingerprint for cache-busting static asset URLs (the `?v=` token).
 
     Built from WEBUI_VERSION plus a short hash of the cacheable static files
-    (ui.js, panels.js, boot.js, index.html, i18n.js, style.css). When any of
-    those files changes on disk, the fingerprint changes, so the asset URL
-    changes and browsers re-fetch instead of serving the old immutable copy.
-    This does NOT alter WEBUI_VERSION itself (update checks use that directly).
+    (every app-shell JS asset referenced with `?v=__WEBUI_VERSION__`, plus
+    index.html and style.css). When any of those files changes on disk, the
+    fingerprint changes, so the asset URL changes and browsers re-fetch instead
+    of serving the old immutable copy. This does NOT alter WEBUI_VERSION itself
+    (update checks use that directly).
     """
     from urllib.parse import quote
     try:
         from api.updates import WEBUI_VERSION
         static_root = api_config.get_static_root()
         hashed = []
-        for _name in ("ui.js", "panels.js", "boot.js", "index.html", "i18n.js", "style.css"):
+        for _name in (
+            # All app-shell JS assets referenced with `?v=__WEBUI_VERSION__` in
+            # index.html, plus the shell HTML/CSS. Every shell file must be
+            # hashed here: if a changed file is left out, the ?v= token stays
+            # constant and browsers keep serving the immutable-cached OLD copy
+            # (e.g. the /compress context-ring fix in commands.js would never
+            # reach clients until a manual hard-refresh). Keep this list in
+            # sync with the `<script src="static/*.js?v=...">` tags.
+            "ui.js", "panels.js", "boot.js", "index.html", "i18n.js", "style.css",
+            "commands.js", "messages.js", "sessions.js", "workspace.js",
+            "terminal.js", "icons.js", "onboarding.js", "outline.js",
+            "assistant_turn_anchors.js", "extension_settings.js", "pwa-startup.js",
+        ):
             _p = (static_root / _name)
             if _p.exists():
                 import hashlib
