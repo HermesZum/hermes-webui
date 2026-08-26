@@ -1320,6 +1320,10 @@ async function send(){
     return;
   }
   _sendInProgress = true;
+  // Reset the input-jank typing flag on send: the user is no longer composing,
+  // so the streamed-output render loop must not keep deferring repaints (which
+  // would leave the Thinking card stuck until the composer is blurred).
+  try { window._userTyping = false; } catch(_) {}
   try{
   const options=arguments[0]||{};
   const literalSlash=!!(options&&options.literalSlash);
@@ -5473,7 +5477,15 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
   // while the user is actively typing in the composer. The render loop defers
   // streamed-output repaints while this is set so keystrokes aren't starved by
   // 50-150ms DOM writes on large sessions. Reset on blur/Enter from boot.js.
-  let _userTyping=false;
+  //
+  // NOTE: this must be a SINGLE shared global (window._userTyping), not a
+  // closure-local. boot.js sets it from a top-level input/blur listener, and
+  // send()/the done handler reset it — all of those are outside this closure,
+  // so a closure-local `let` would be a different variable and the guard would
+  // never see the flag (silent no-op). Reading/writing the global keeps every
+  // writer and the render guard in agreement.
+  if(typeof window._userTyping!=='boolean') window._userTyping=false;
+  const _userTyping=()=>window._userTyping;
 
   function _scheduleRender(parsed){
     // If caller provides a pre-computed parse result, cache it for _doRender.
@@ -5505,7 +5517,7 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       // starving keystrokes during active turns. Skipping render while the user
       // is composing lets their input get through first; the next idle/normal
       // tick re-syncs the visible output. (_userTyping is reset on blur/Enter.)
-      if(_userTyping && document.activeElement===($('msg')||null)) return;
+      if(_userTyping() && document.activeElement===($('msg')||null)) return;
       // Mobile scroll-jank guard: temporarily disable overflow-anchor before DOM
       // writes to suppress Chromium scroll re-anchoring during streaming growth.
       if(typeof window._fixMobileScrollJank==='function') window._fixMobileScrollJank();
@@ -6008,6 +6020,10 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
         // can reintroduce a stale thinking card or duplicate content.
         _streamFinalized=true;
         _cancelAnimationFramePendingStreamRender();
+        // Reset the input-jank typing flag on completion so the Thinking card
+        // always settles even if focus is still in the composer (the _userTyping
+        // render-deferral guard would otherwise keep it visible until blur).
+        try { window._userTyping = false; } catch(_) {}
         _streamFadeCleanupReduceMotionListener();
         if(typeof finalizeThinkingCard==='function') finalizeThinkingCard();
         // Finalize smd parser — flushes any remaining buffered markdown state

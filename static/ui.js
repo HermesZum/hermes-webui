@@ -1533,7 +1533,21 @@ function _wireMessageWindowLoadEarlierButton(){
   const indicator=$('loadOlderIndicator');
   if(!indicator) return;
   indicator.onclick=()=>{
-    if(typeof _loadOlderMessages==='function') _loadOlderMessages();
+    if(typeof _loadOlderMessages!=='function') return;
+    // If a scroll-triggered prefetch is already in flight, _loadOlderMessages
+    // early-returns (its _loadingOlder mutex) and this manual click would be
+    // silently swallowed. Retry shortly after the in-flight load releases the
+    // mutex so the user's click is never lost. Bounded retries; no busy loop.
+    if(window._loadingOlder){
+      let _tries=0;
+      const _retry=()=>{
+        if(window._loadingOlder && _tries<10){ _tries++; setTimeout(_retry, 120); return; }
+        if(!window._loadingOlder) _loadOlderMessages();
+      };
+      _retry();
+      return;
+    }
+    _loadOlderMessages();
   };
 }
 function _isSessionJumpButtonsEnabled(){

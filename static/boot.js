@@ -2295,7 +2295,7 @@ $('modelSelect').onchange=async()=>{
 $('msg').addEventListener('input',()=>{
   // Mark active typing so the streamed-output render loop can defer repaints
   // (see _scheduleRender input-jank guard) and never starve keystrokes.
-  try { _userTyping = true; } catch(_) {}
+  try { window._userTyping = true; } catch(_) {}
   updateSendBtn();
   scheduleComposerAutoResize();
   // Persist composer draft to server (debounced in _saveComposerDraft).
@@ -2330,7 +2330,7 @@ $('msg').addEventListener('input',()=>{
 });
 // Reset the active-typing flag when the composer loses focus, so the
 // streamed-output render loop stops deferring repaints (see _scheduleRender).
-$('msg').addEventListener('blur',()=>{ try { _userTyping = false; } catch(_) {} });
+$('msg').addEventListener('blur',()=>{ try { window._userTyping = false; } catch(_) {} });
 // #5514/#5515: re-pin the transcript on ANY composer height change, not only the
 // ones that route through the input->autoResize path. A multi-line paste
 // (WisprFlow), a draft restore, an attachment tray / selection-chip appearing, a
