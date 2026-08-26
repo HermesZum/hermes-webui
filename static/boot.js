@@ -2286,9 +2286,11 @@ $('modelSelect').onchange=async()=>{
   // re-reverts a cross-family pick (the #3737 bug, Codex catch). send() clears it
   // after reading a matching pending pick. (#3739/#3737)
   _applySessionContextMetadataUpdate(data);
-  // Warn if selected model belongs to a different provider than what Hermes is configured for
+  // Warn if selected model belongs to a different provider than what Hermes is configured for.
+  // Use the option's authoritative provider (modelState.model_provider) so multi-provider
+  // configs don't false-positive against the global model.provider (#glmm-freetheai).
   if(typeof _checkProviderMismatch==='function'){
-    const warn=_checkProviderMismatch(selectedModel);
+    const warn=_checkProviderMismatch(selectedModel, modelState.model_provider);
     if(warn&&typeof showToast==='function') showToast(warn,4000);
   }
 };

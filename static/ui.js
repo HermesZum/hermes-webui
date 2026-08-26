@@ -2900,6 +2900,13 @@ function _providerSkipsModelMismatchWarning(providerId){
   const p=String(providerId||'').toLowerCase();
   return !p||p==='custom'||p.startsWith('custom:')||p==='openrouter';
 }
+function _providerCanRouteVendorModel(optionProviderId){
+  // Named custom providers and OpenRouter can legitimately route vendor-
+  // prefixed model IDs from any upstream. When the selected option already
+  // tells us the real provider, skip the mismatch warning for these.
+  const p=String(optionProviderId||'').toLowerCase();
+  return p==='openrouter'||p.startsWith('custom:');
+}
 function _providerDefersMissingModelFallback(providerId){
   const p=String(providerId||'').toLowerCase();
   // Named custom providers and OpenRouter can legitimately route vendor-prefixed
@@ -3681,22 +3688,35 @@ async function _fetchLiveModels(provider, sel, requestSeq=null){
  * currently configured in Hermes. Returns a warning string if mismatched,
  * or null if the selection looks compatible.
  *
+ * The option's own `data-provider` (when known) is authoritative: if the
+ * user selected a model that the backend grouped under `freetheai`, we should
+ * compare against `freetheai`, not the global `model.provider` (`kilocode`).
+ * That avoids false positives in multi-provider configs where a slash-prefixed
+ * model legitimately lives under a non-active provider.
+ *
  * Provider detection is intentionally loose — we compare the model's slash
- * prefix (e.g. "openai/" from "openai/gpt-4o") against the active provider
- * name. Custom/local endpoints report active_provider='custom', a named
+ * prefix (e.g. "openai/" from "openai/gpt-4o") against the configured/active
+ * provider name. Custom/local endpoints report active_provider='custom', a named
  * custom provider such as 'custom:zenmux', or the base_url hostname; skip the
  * check for those values to avoid false positives.
  */
-function _checkProviderMismatch(modelId){
-  const ap=(window._activeProvider||'').toLowerCase();
-  if(_providerSkipsModelMismatchWarning(ap)) return null; // can't reliably check
+function _checkProviderMismatch(modelId, optionProviderId){
   // @provider: prefixed IDs came from that provider's live model list — no mismatch possible
   if(modelId.startsWith('@')) return null;
   const slash=modelId.indexOf('/');
   if(slash<0) return null; // bare model name, no provider prefix
+
+  // The dropdown option itself knows which provider owns this model. Use it
+  // when available; fall back to the global active provider only when unknown.
+  const resolvedProvider=String(optionProviderId||'').trim()||(window._activeProvider||'');
+  const ap=resolvedProvider.toLowerCase();
+  if(_providerSkipsModelMismatchWarning(ap)) return null; // can't reliably check
+  // Aggregators / custom endpoints can legitimately route any vendor prefix.
+  if(_providerCanRouteVendorModel(optionProviderId)) return null;
+
   const modelProvider=modelId.substring(0,slash).toLowerCase();
   // Normalise common aliases
-  const aliases={'claude':'anthropic','gpt':'openai','gemini':'google'};
+  const aliases={'claude':'anthropic','gpt':'openai','gemini':'google','glm':'z-ai'};
   const norm=p=>aliases[p]||p;
   if(norm(modelProvider)!==norm(ap)){
     return (window.t?window.t('provider_mismatch_warning',modelId,ap):

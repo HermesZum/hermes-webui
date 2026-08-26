@@ -178,6 +178,58 @@ class TestCheckProviderMismatch:
             "from the /api/models response"
         )
 
+    def test_uses_option_provider_when_supplied(self):
+        """Function must compare against the option's own provider when supplied."""
+        src = _read("static/ui.js")
+        idx = src.find("function _checkProviderMismatch")
+        block = src[idx:idx + 1200]
+        assert "optionProviderId" in block, (
+            "_checkProviderMismatch must accept optionProviderId"
+        )
+        assert "resolvedProvider" in block, (
+            "_checkProviderMismatch must resolve provider from optionProviderId"
+        )
+        assert "window._activeProvider" in block, (
+            "_checkProviderMismatch must fall back to window._activeProvider"
+        )
+
+    def test_glm_vendor_alias_normalised(self):
+        """The 'glm' prefix must alias to 'z-ai' for mismatch comparison."""
+        src = _read("static/ui.js")
+        idx = src.find("function _checkProviderMismatch")
+        block = src[idx:idx + 1200]
+        assert "'glm':'z-ai'" in block, (
+            "_checkProviderMismatch must normalise glm -> z-ai"
+        )
+
+    def test_openrouter_option_can_route_vendor_model(self):
+        """OpenRouter as option provider skips the vendor-prefix warning."""
+        src = _read("static/ui.js")
+        idx = src.find("function _checkProviderMismatch")
+        block = src[idx:idx + 1200]
+        assert "_providerCanRouteVendorModel" in block, (
+            "_checkProviderMismatch must use _providerCanRouteVendorModel"
+        )
+
+    def test_option_provider_takes_precedence_over_active_provider(self):
+        """The resolved provider must come from optionProviderId before window._activeProvider."""
+        src = _read("static/ui.js")
+        idx = src.find("function _checkProviderMismatch")
+        block = src[idx:idx + 1200]
+        resolved_idx = block.find("const resolvedProvider")
+        active_fallback_idx = block.find("window._activeProvider")
+        assert resolved_idx != -1 and active_fallback_idx != -1
+        assert resolved_idx < active_fallback_idx, (
+            "optionProviderId must be resolved before falling back to window._activeProvider"
+        )
+        # Ensure _providerCanRouteVendorModel is consulted before the prefix comparison
+        route_idx = block.find("_providerCanRouteVendorModel")
+        aliases_idx = block.find("const aliases")
+        assert route_idx != -1 and aliases_idx != -1
+        assert route_idx < aliases_idx, (
+            "aggregator routing check must happen before prefix comparison"
+        )
+
 
 # ── 3. static/messages.js: apperror handler ─────────────────────────────────
 
