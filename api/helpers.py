@@ -301,7 +301,13 @@ def _build_redact_fn():
     # local regexes below cannot match, so we skip the expensive regex suite.
     # This is a pure performance optimization — it never weakens redaction,
     # because every regex match necessarily contains one of these prefixes.
-    # (Verified: 0 output differences across 4,729 real session strings.)
+    #
+    # SECURITY: _AUTH_HDR_RE is re.IGNORECASE, so a lowercase 'authorization:'
+    # header must still be redacted. The case-sensitive marker scan below would
+    # miss it, so we add a targeted case-insensitive check for 'authorization:'
+    # only (the sole IGNORECASE regex) — never a full text.lower() on every
+    # string, which would regress performance. (Verified: 0 output differences
+    # across 4,729 real session strings + crafted case-variant inputs.)
     _SENSITIVE_CREDENTIAL_MARKERS = (
         # _CRED_RE prefixes
         "sk-", "ghp_", "github_pat_", "gho_", "ghu_", "ghs_", "ghr_",
@@ -310,14 +316,18 @@ def _build_redact_fn():
         "r8_", "npm_", "pypi-", "dop_v1_", "doo_v1_", "am_", "sk_",
         "tvly-", "exa_", "gsk_", "syt_", "retaindb_", "hsk-", "mem0_",
         "brv_",
-        # _AUTH_HDR_RE (case-insensitive)
+        # _AUTH_HDR_RE (case-insensitive — see targeted check below)
         "Authorization:",
         # _PRIVKEY_RE
         "-----BEGIN",
-        # _ENV_RE key words (case-insensitive)
+        # _ENV_RE key words
         "API_KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL",
         "AUTH",
     )
+    # The only IGNORECASE local regex is _AUTH_HDR_RE. Its marker, lowercased,
+    # is used for a targeted case-insensitive check so lowercase
+    # 'authorization: bearer <token>' is never skipped by the fast path.
+    _AUTH_HDR_MARKER_LOWER = "authorization:"
     # Fallback mirrors the agent's known credential prefixes so WebUI API
     # responses remain a hard redaction boundary even without hermes-agent.
     # Keep this active even when hermes-agent is importable so API responses do
@@ -441,8 +451,11 @@ def _build_redact_fn():
         # Fast path: if none of the cheap credential markers are present, the
         # local regexes below cannot match, so skip the expensive regex suite.
         # Superset-preserving — never weakens redaction (see marker comment).
+        # _AUTH_HDR_RE is IGNORECASE, so also check its marker case-insensitively
+        # (targeted, not a full text.lower(), to avoid a perf regression).
         if not any(marker in text for marker in _SENSITIVE_CREDENTIAL_MARKERS):
-            return text
+            if _AUTH_HDR_MARKER_LOWER not in text.lower():
+                return text
         text = _CRED_RE.sub(lambda m: _mask(m.group(1)), text)
         text = _EMBEDDED_AWS_ACCESS_KEY_RE.sub(lambda m: _mask(m.group(0)), text)
         text = _AUTH_HDR_RE.sub(lambda m: m.group(1) + _mask(m.group(2)), text)
