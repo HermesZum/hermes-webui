@@ -320,9 +320,9 @@ def _build_redact_fn():
         "Authorization:",
         # _PRIVKEY_RE
         "-----BEGIN",
-        # _ENV_RE key words
-        "API_KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL",
-        "AUTH",
+        # _ENV_RE key words (API_?KEY matches both APIKEY and API_KEY)
+        "APIKEY", "API_KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD",
+        "CREDENTIAL", "AUTH",
     )
     # The only IGNORECASE local regex is _AUTH_HDR_RE. Its marker, lowercased,
     # is used for a targeted case-insensitive check so lowercase
