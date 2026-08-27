@@ -13895,6 +13895,30 @@ def handle_get(handler, parsed) -> bool:
         handle_fx_health_get(handler, parsed)
         return True
 
+    if parsed.path == "/api/fx/gate":
+        from api.fx_bridge import handle_fx_gate_get
+
+        handle_fx_gate_get(handler, parsed)
+        return True
+
+    if parsed.path == "/api/fx/actions":
+        from api.fx_bridge import handle_fx_actions_get
+
+        handle_fx_actions_get(handler, parsed)
+        return True
+
+    if parsed.path == "/api/fx/position":
+        from api.fx_bridge import handle_fx_position_get
+
+        handle_fx_position_get(handler, parsed)
+        return True
+
+    if parsed.path == "/api/fx/calendar":
+        from api.fx_bridge import handle_fx_calendar_get
+
+        handle_fx_calendar_get(handler, parsed)
+        return True
+
     # ── Tool forge (GET) — hermes-tool-forge plugin store ──
     if parsed.path == "/api/forge":
         from api.forge_bridge import handle_forge_get
