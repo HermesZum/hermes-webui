@@ -1,0 +1,45 @@
+/* ═══ FX panel sub-tabs ═══ */
+.fx-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); padding-bottom: 0; }
+.fx-tab { border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 500; padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.fx-tab:hover { color: var(--fg, inherit); }
+.fx-tab-on { color: var(--accent); border-bottom-color: var(--accent); }
+/* ═══ FX panel (fx-tracker) ═══ */
+.fx-panel-body { overflow-y: auto; }
+.fx-section { margin: 0 0 20px; }
+.fx-section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
+.fx-note-count { font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 6px; }
+.fx-guard { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 10px; }
+.fx-guard-ok { border-color: color-mix(in srgb, #22c55e 45%, var(--border)); background: color-mix(in srgb, #22c55e 8%, transparent); }
+.fx-guard-error { border-color: color-mix(in srgb, #ef4444 45%, var(--border)); background: color-mix(in srgb, #ef4444 8%, transparent); }
+.fx-contradiction-line { font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+.fx-health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.fx-health-cell { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+.fx-health-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 3px; }
+.fx-badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1.6; }
+.fx-pass { background: color-mix(in srgb, #22c55e 18%, transparent); color: #16a34a; }
+.fx-fail { background: color-mix(in srgb, #ef4444 18%, transparent); color: #dc2626; }
+.fx-na { background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--muted); }
+.fx-type-decision { background: color-mix(in srgb, #6366f1 16%, transparent); color: #818cf8; }
+.fx-type-reference { background: color-mix(in srgb, #0ea5e9 16%, transparent); color: #38bdf8; }
+.fx-type-strategy { background: color-mix(in srgb, #f59e0b 16%, transparent); color: #fbbf24; }
+.fx-type-plan { background: color-mix(in srgb, #14b8a6 16%, transparent); color: #2dd4bf; }
+.fx-type-incident { background: color-mix(in srgb, #ef4444 16%, transparent); color: #f87171; }
+.fx-report-card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.fx-report-missing { opacity: .55; }
+.fx-report-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.fx-report-title { font-weight: 600; font-size: 13px; }
+.fx-report-when { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.fx-report-gates { display: flex; gap: 6px; align-items: center; margin: 6px 0 2px; }
+.fx-gate-label { font-size: 11px; color: var(--muted); }
+.fx-briefing { font-size: 12px; color: var(--muted); margin-top: 4px; word-break: break-word; }
+.fx-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.fx-chip { border: 1px solid var(--border); background: transparent; color: var(--muted); border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; }
+.fx-chip:hover { color: var(--fg, inherit); border-color: var(--accent); }
+.fx-chip-on { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); border-color: var(--accent); }
+.fx-notes-list { display: flex; flex-direction: column; }
+.fx-note-row { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.fx-note-row:last-child { border-bottom: none; }
+.fx-note-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-note-date { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.fx-loading, .fx-error, .fx-muted { color: var(--muted); font-size: 13px; }
+.fx-error { color: #dc2626; }

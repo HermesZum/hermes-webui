@@ -44,7 +44,7 @@ const APP_TITLEBAR_KEYS = {
   memory: 'tab_memory', workspaces: 'tab_workspaces',
   profiles: 'tab_profiles', todos: 'tab_todos', insights: 'tab_insights', logs: 'tab_logs', settings: 'tab_settings',
 };
-const MAIN_VIEW_PANELS = ['settings','skills','memory','tasks','kanban','workspaces','profiles','insights','logs','plugin'];
+const MAIN_VIEW_PANELS = ['settings','skills','memory','fx','tasks','kanban','workspaces','profiles','insights','logs','plugin'];
 const MAIN_VIEW_SIDEBAR_PANEL_FALLBACKS = { plugin: 'settings' };
 
 /**
@@ -416,6 +416,7 @@ async function switchPanel(name, opts = {}) {
   if (nextPanel === 'kanban') await loadKanban();
   if (nextPanel === 'skills') await loadSkills();
   if (nextPanel === 'memory') await loadMemory();
+  if (nextPanel === 'fx') await loadFx();
   if (nextPanel === 'workspaces') await loadWorkspacesPanel();
   if (nextPanel === 'profiles') await loadProfilesPanel();
   if (nextPanel === 'todos') loadTodos();
@@ -5378,6 +5379,130 @@ function _renderExternalNotesSources() {
   if (empty) empty.style.display = 'none';
   _memoryMode = 'read';
   _setMemoryHeaderButtons('read');
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// FX panel — fx-tracker (HermesZum/fx-tracker)
+// ═══════════════════════════════════════════════════════════════════════
+let _fxData = null;        // { health, reports, notes }
+let _fxFilter = '';        // note-type filter chip
+
+async function loadFx(force) {
+  const content = $('fxPanelContent');
+  if (!content) return;
+  if (force) _fxData = null;
+  if (!_fxData) {
+    content.innerHTML = `<div class="fx-loading">${esc((window.I18N && I18N.t) ? I18N.t('loading') : 'Loading...')}</div>`;
+    try {
+      const [health, reports, notes] = await Promise.all([
+        api('/api/fx/health', {cache:'no-store', timeoutMs:15000}),
+        api('/api/fx/reports', {cache:'no-store', timeoutMs:15000}),
+        api('/api/fx/notes', {cache:'no-store', timeoutMs:15000})
+      ]);
+      _fxData = {health, reports, notes};
+    } catch (e) {
+      content.innerHTML = `<div class="fx-error">${esc('FX panel error: ' + (e && e.message ? e.message : e))}</div>`;
+      return;
+    }
+  }
+  _renderFxPanel();
+}
+
+function _fxT(key, fallback) {
+  try { return I18N.t(key) || fallback; } catch (_) { return fallback; }
+}
+
+function _fxGateBadge(val) {
+  if (val === true) return `<span class="fx-badge fx-pass">${esc(_fxT('fx_pass','PASS'))}</span>`;
+  if (val === false) return `<span class="fx-badge fx-fail">${esc(_fxT('fx_fail','FAIL'))}</span>`;
+  return `<span class="fx-badge fx-na">n/a</span>`;
+}
+
+function _fxRenderHealth(h) {
+  const g = (h && h.guard) || {};
+  let guardHtml;
+  if (g.error) {
+    guardHtml = `<div class="fx-guard fx-guard-error"><span class="fx-badge fx-fail">${esc(_fxT('fx_guard_error','GUARD ERROR'))}</span><span class="fx-muted">${esc(g.error)}</span></div>`;
+  } else if (g.ok === true) {
+    guardHtml = `<div class="fx-guard fx-guard-ok"><span class="fx-badge fx-pass">${esc(_fxT('fx_guard_ok','CONSISTENCY GUARD: ALL CLEAR'))}</span></div>`;
+  } else {
+    const lines = (g.contradictions || []).map(l => `<div class="fx-contradiction-line">${esc(l)}</div>`).join('');
+    guardHtml = `<div class="fx-guard fx-guard-error"><span class="fx-badge fx-fail">${esc(_fxT('fx_guard_fail','CONTRADICTIONS DETECTED'))}</span>${lines}</div>`;
+  }
+  const paper = (h && h.paper) || {};
+  const ct = (h && h.ctrader) || {};
+  const risk = (h && h.risk) || {};
+  const paperTxt = paper.error ? esc(paper.error)
+    : `${esc(_fxT('fx_open','Open'))}: ${paper.open || 0} · ${esc(_fxT('fx_closed','Closed'))}: ${paper.n_closed || 0} · ΣR: ${paper.realized_r != null ? paper.realized_r : 'n/a'} · ${paper.halted ? esc(_fxT('fx_halted','HALTED')) : esc(_fxT('fx_running','running'))}`;
+  const ctTxt = ct.error ? esc(ct.error) : `${esc(ct.status || 'unknown')}${ct.since ? ' · ' + esc(ct.since) : ''}`;
+  const riskTxt = risk.error ? esc(risk.error) : `risk ${risk.risk_pct != null ? risk.risk_pct + '%' : 'n/a'} · ${esc(_fxT('fx_pause_at','pause at'))} ${risk.pause_threshold_R != null ? risk.pause_threshold_R + 'R' : 'n/a'}`;
+  return `<div class="fx-section"><div class="fx-section-title">${esc(_fxT('fx_health','Health'))}</div>${guardHtml}
+    <div class="fx-health-grid">
+      <div class="fx-health-cell"><div class="fx-health-label">${esc(_fxT('fx_paper_trader','Paper trader'))}</div><div>${paperTxt}</div></div>
+      <div class="fx-health-cell"><div class="fx-health-label">cTrader</div><div>${ctTxt}</div></div>
+      <div class="fx-health-cell"><div class="fx-health-label">${esc(_fxT('fx_risk_config','Risk config'))}</div><div>${riskTxt}</div></div>
+    </div></div>`;
+}
+
+function _fxRenderReports(r) {
+  const reports = (r && r.reports) || [];
+  const cards = reports.map(c => {
+    if (!c.available) {
+      return `<div class="fx-report-card fx-report-missing"><div class="fx-report-title">${esc(c.label)}</div><div class="fx-muted">${esc(c.reason || 'unavailable')}</div></div>`;
+    }
+    const d = c.data || {};
+    const gate = (d.gate_pass === undefined && d.gate_pass_applied === undefined && d.survival_pass === undefined)
+      ? '' : `<div class="fx-report-gates">${d.gate_pass !== undefined ? _fxGateBadge(d.gate_pass) + '<span class="fx-gate-label">canonical</span>' : ''}${d.gate_pass_applied !== undefined ? _fxGateBadge(d.gate_pass_applied) + '<span class="fx-gate-label">applied</span>' : ''}${d.survival_pass !== undefined ? _fxGateBadge(d.survival_pass) + '<span class="fx-gate-label">survival</span>' : ''}</div>`;
+    const briefing = d.briefing_line ? `<div class="fx-briefing">${esc(d.briefing_line)}</div>` : '';
+    const when = c.mtime ? new Date(c.mtime * 1000).toISOString().slice(0, 16).replace('T', ' ') : '';
+    return `<div class="fx-report-card"><div class="fx-report-head"><span class="fx-report-title">${esc(c.label)}</span><span class="fx-report-when">${when} UTC</span></div>${gate}${briefing}</div>`;
+  }).join('');
+  return `<div class="fx-section"><div class="fx-section-title">${esc(_fxT('fx_reports','Reports'))}</div>${cards || `<div class="fx-muted">${esc(_fxT('fx_no_reports','No reports found'))}</div>`}</div>`;
+}
+
+function _fxRenderNotes(n) {
+  const all = (n && n.notes) || [];
+  const chips = [''].concat(['decision','reference','strategy','plan','incident']);
+  const chipHtml = chips.map(t => `<button class="fx-chip${_fxFilter === t ? ' fx-chip-on' : ''}" onclick="_fxSetFilter('${t}')">${esc(t === '' ? _fxT('fx_all','all') : t)}</button>`).join('');
+  const notes = _fxFilter ? all.filter(x => x.type === _fxFilter) : all;
+  const rows = notes.map(x => `
+    <div class="fx-note-row" title="${esc(x.path)}">
+      <span class="fx-badge fx-type-${esc(x.type)}">${esc(x.type)}</span>
+      <span class="fx-note-title">${esc(x.title)}</span>
+      <span class="fx-note-date">${esc(x.updated || x.created || '')}</span>
+    </div>`).join('');
+  const count = `${notes.length}${all.length !== notes.length ? ' / ' + all.length : ''}`;
+  return `<div class="fx-section"><div class="fx-section-title">${esc(_fxT('fx_notes','Notes'))} <span class="fx-note-count">${count}</span></div>
+    <div class="fx-chips">${chipHtml}</div>
+    <div class="fx-notes-list">${rows || `<div class="fx-muted">${esc(_fxT('fx_no_notes','No notes found'))}</div>`}</div></div>`;
+}
+
+function _fxSetFilter(t) { _fxFilter = t === _fxFilter ? '' : t; _renderFxPanel(); }
+
+// ── Sub-tabs: each concern renders in its own view; add new tabs here ──
+const FX_TABS = [
+  { id: 'health',  labelKey: 'fx_health',  fallback: 'Health',  render: () => _fxRenderHealth((_fxData.health || {})) },
+  { id: 'reports', labelKey: 'fx_reports', fallback: 'Reports', render: () => _fxRenderReports((_fxData.reports || {})) },
+  { id: 'notes',   labelKey: 'fx_notes',   fallback: 'Notes',   render: () => _fxRenderNotes((_fxData.notes || {})) },
+];
+let _fxTab = 'health';
+
+function _fxSetTab(id) { _fxTab = id; _renderFxPanel(); }
+
+function _renderFxPanel() {
+  const content = $('fxPanelContent');
+  if (!content || !_fxData) return;
+  const tabsHtml = FX_TABS.map(t =>
+    `<button class="fx-tab${_fxTab === t.id ? ' fx-tab-on' : ''}" onclick="_fxSetTab('${t.id}')">${esc(_fxT(t.labelKey, t.fallback))}</button>`
+  ).join('');
+  const active = FX_TABS.find(t => t.id === _fxTab) || FX_TABS[0];
+  const errHtml = (k) => (_fxData[k] && _fxData[k].error) ? `<div class="fx-error">${esc(_fxData[k].error)}</div>` : '';
+  const errKey = { health: 'health', reports: 'reports', notes: 'notes' }[active.id];
+  content.innerHTML = `<div class="main-view-content">
+    <div class="fx-tabs">${tabsHtml}</div>
+    ${errHtml(errKey)}
+    ${active.render()}
+  </div>`;
 }
 
 function _renderMemoryDetail(section) {

@@ -13876,6 +13876,53 @@ def handle_get(handler, parsed) -> bool:
         handle_cognitive_get(handler, parsed)
         return True
 
+    # ── FX tracker (GET) — fx-tracker panel: vault notes / reports / health ──
+    if parsed.path == "/api/fx/notes":
+        from api.fx_bridge import handle_fx_notes_get
+
+        handle_fx_notes_get(handler, parsed)
+        return True
+
+    if parsed.path == "/api/fx/reports":
+        from api.fx_bridge import handle_fx_reports_get
+
+        handle_fx_reports_get(handler, parsed)
+        return True
+
+    if parsed.path == "/api/fx/health":
+        from api.fx_bridge import handle_fx_health_get
+
+        handle_fx_health_get(handler, parsed)
+        return True
+
+    # ── Tool forge (GET) — hermes-tool-forge plugin store ──
+    if parsed.path == "/api/forge":
+        from api.forge_bridge import handle_forge_get
+
+        handle_forge_get(handler, parsed)
+        return True
+
+    # ── Guardrails (GET) — hermes-guardrails plugin audit store ──
+    if parsed.path == "/api/guardrails":
+        from api.guardrails_bridge import handle_guardrails_get
+
+        handle_guardrails_get(handler, parsed)
+        return True
+
+
+    # ── Token telemetry (GET) — hermes-token-telemetry plugin store ──
+    if parsed.path == "/api/token-telemetry":
+        from api.token_telemetry_bridge import handle_token_telemetry_get
+
+        handle_token_telemetry_get(handler, parsed)
+        return True
+
+    if parsed.path == "/api/token-telemetry/session":
+        from api.token_telemetry_bridge import handle_token_telemetry_session_get
+
+        handle_token_telemetry_session_get(handler, parsed)
+        return True
+
     # ── Profile API (GET) ──
     if parsed.path == "/api/profiles":
         from api import profiles as profiles_api
