@@ -13926,6 +13926,25 @@ def handle_get(handler, parsed) -> bool:
         handle_cognitive_get(handler, parsed)
         return True
 
+    # ── FX tracker (GET) — fx-tracker panel: vault notes / reports / health ──
+    if parsed.path == "/api/fx/notes":
+        from api.fx_bridge import handle_fx_notes_get
+
+        handle_fx_notes_get(handler, parsed)
+        return True
+
+    if parsed.path == "/api/fx/reports":
+        from api.fx_bridge import handle_fx_reports_get
+
+        handle_fx_reports_get(handler, parsed)
+        return True
+
+    if parsed.path == "/api/fx/health":
+        from api.fx_bridge import handle_fx_health_get
+
+        handle_fx_health_get(handler, parsed)
+        return True
+
     # ── Tool forge (GET) — hermes-tool-forge plugin store ──
     if parsed.path == "/api/forge":
         from api.forge_bridge import handle_forge_get
