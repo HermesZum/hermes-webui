@@ -24,12 +24,14 @@ Design notes:
 from __future__ import annotations
 
 import ast
+import csv
 import json
 import logging
 import os
 import re
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -63,12 +65,24 @@ REPORT_FILES: List[Dict[str, str]] = [
 _notes_cache: Dict[str, Any] = {"t": 0.0, "notes": []}
 _reports_cache: Dict[str, Any] = {"t": 0.0, "reports": []}
 _health_cache: Dict[str, Any] = {"t": 0.0, "health": {}}
+_gate_cache: Dict[str, Any] = {"t": 0.0, "gate": {}}
+_actions_cache: Dict[str, Any] = {"t": 0.0, "actions": {}}
+_position_cache: Dict[str, Any] = {"t": 0.0, "position": {}}
+_calendar_cache: Dict[str, Any] = {"t": 0.0, "calendar": {}}
+
+GRADUATION_N_MIN = 20        # journaled demo trades required
+GRADUATION_PLAN_PCT = 85.0   # plan_followed threshold (journal-audited)
+GRADUATION_SIZE = "1/4 size"
 
 
 def _invalidate_caches() -> None:
     _notes_cache["t"] = 0.0
     _reports_cache["t"] = 0.0
     _health_cache["t"] = 0.0
+    _gate_cache["t"] = 0.0
+    _actions_cache["t"] = 0.0
+    _position_cache["t"] = 0.0
+    _calendar_cache["t"] = 0.0
 
 
 # ── Frontmatter parsing ───────────────────────────────────────────────────
@@ -276,6 +290,180 @@ def get_health() -> Dict[str, Any]:
     return _health_cache["health"]
 
 
+def _read_json(path: Path) -> Optional[Dict[str, Any]]:
+    """Load a JSON artifact; None on missing/corrupt (probes degrade, never 500)."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        logger.info("fx_bridge: unreadable %s (%s)", path.name, e)
+        return None
+
+
+# ── Graduation gate ───────────────────────────────────────────────────────
+def get_gate() -> Dict[str, Any]:
+    """Graduation-gate progress from the live trade ledger (results/trades.csv).
+
+    Criteria per the vault v2-runner approval: >= GRADUATION_N_MIN journaled
+    demo trades, expectancy > 0 in R, plan_followed >= 85%. The percentage
+    itself requires a journal audit (not derivable from trades.csv), so it is
+    reported as ``journal_audit_required`` — the panel must not fabricate it.
+    Read-only: this computes over the ledger, it never writes.
+    """
+    now = time.time()
+    if now - _gate_cache["t"] <= HEALTH_CACHE_TTL and _gate_cache["gate"]:
+        return _gate_cache["gate"]
+    try:
+        rows: List[Dict[str, Any]] = []
+        path = FX_PROJECT_DIR / "results" / "trades.csv"
+        with path.open(encoding="utf-8", newline="") as fh:
+            for r in csv.DictReader(fh):
+                try:
+                    rows.append({
+                        "pair": (r.get("pair") or "").strip(),
+                        "date": (r.get("date") or "").strip(),
+                        "dir": (r.get("dir") or "").strip(),
+                        "r_net": float(r.get("r_net") or 0.0),
+                        "reason": (r.get("reason") or "").strip(),
+                    })
+                except (TypeError, ValueError):
+                    continue
+        n = len(rows)
+        exp = (sum(r["r_net"] for r in rows) / n) if n else 0.0
+        wins = sum(1 for r in rows if r["r_net"] > 0)
+        total_r = sum(r["r_net"] for r in rows)
+        ready_partial = n >= GRADUATION_N_MIN and exp > 0
+        gate: Dict[str, Any] = {
+            "available": True,
+            "n_min": GRADUATION_N_MIN,
+            "plan_pct_required": GRADUATION_PLAN_PCT,
+            "graduation_size": GRADUATION_SIZE,
+            "n_trades": n,
+            "expectancy_R": round(exp, 3),
+            "total_r": round(total_r, 2),
+            "win_rate_pct": round(wins / n * 100, 1) if n else 0.0,
+            "plan_followed_pct": None,
+            "plan_followed_status": "journal_audit_required",
+            "ready": ready_partial,
+            "verdict": ("READY (confirm plan_followed from journal, then go live at 1/4 size)"
+                        if ready_partial else "PENDING"),
+            "criteria": [
+                {"label": f"Journaled trades >= {GRADUATION_N_MIN}", "value": n,
+                 "pass": n >= GRADUATION_N_MIN},
+                {"label": "Expectancy > 0 (R)", "value": round(exp, 3), "pass": exp > 0},
+                {"label": f"plan_followed >= {GRADUATION_PLAN_PCT:.0f}%", "value": None,
+                 "pass": None, "note": "requires journal audit"},
+                {"label": "Go-live size", "value": GRADUATION_SIZE, "pass": None,
+                 "note": "only after full gate confirmation"},
+            ],
+        }
+        _gate_cache["gate"] = gate
+        _gate_cache["t"] = now
+        return gate
+    except Exception as e:  # noqa: BLE001 — degrade, never 500
+        logger.error("fx_bridge gate error: %s", e)
+        return {"available": False, "error": str(e)}
+
+
+# ── Actions (alert-router events + regime shifts) ─────────────────────────
+def get_actions() -> Dict[str, Any]:
+    now = time.time()
+    if now - _actions_cache["t"] <= HEALTH_CACHE_TTL and _actions_cache["actions"]:
+        return _actions_cache["actions"]
+    events: List[Dict[str, Any]] = []
+    ar = _read_json(FX_PROJECT_DIR / "results" / "fx_action_required.json")
+    if ar is None:
+        events.append({"source": "fx_action_required", "severity": "WATCH",
+                       "category": "stale",
+                       "text": "fx_action_required.json missing or unreadable — alert router may be down"})
+    else:
+        for ev in ar.get("events", []):
+            events.append({"source": ev.get("source"), "severity": ev.get("severity"),
+                           "category": ev.get("category"), "text": ev.get("text")})
+    reg = _read_json(FX_PROJECT_DIR / "results" / "regime_monitor.json")
+    if reg:
+        changed = [p for p in (reg.get("changed_pairs") or []) if isinstance(p, str)]
+        if changed:
+            events.append({"source": "regime_monitor", "severity": "WATCH", "category": "regime",
+                           "text": f"Regime changed on: {', '.join(changed)}"})
+    sev_rank = {"HALT": 0, "ACTION": 1, "WATCH": 2}
+    events.sort(key=lambda e: sev_rank.get(e.get("severity") or "WATCH", 2))
+    out = {"available": True, "events": events,
+           "severity": events[0]["severity"] if events else "CLEAR",
+           "count": len(events)}
+    _actions_cache["actions"] = out
+    _actions_cache["t"] = now
+    return out
+
+
+# ── Live position (paper trader) ──────────────────────────────────────────
+def get_position() -> Dict[str, Any]:
+    now = time.time()
+    if now - _position_cache["t"] <= HEALTH_CACHE_TTL and _position_cache["position"]:
+        return _position_cache["position"]
+    st = _read_json(FX_PROJECT_DIR / "data" / "paper_state.json")
+    if st is None:
+        out: Dict[str, Any] = {"available": False, "error": "paper_state.json unreadable"}
+    else:
+        positions = st.get("positions") or {}
+        out = {"available": True, "halted": bool(st.get("halted", False)),
+               "n_open": len(positions), "positions": []}
+        for pair, p in sorted(positions.items()):
+            if not isinstance(p, dict):
+                continue
+            out["positions"].append({
+                "pair": pair,
+                "trade_id": p.get("trade_id"),
+                "dir": p.get("dir"),
+                "entry": p.get("entry"),
+                "stop": p.get("stop"),
+                "entry_time": p.get("entry_time"),
+                "atr_pips": p.get("atr_pips"),
+                "banked_r": p.get("banked_r", 0.0),
+                "half_closed": bool(p.get("half_closed", False)),
+            })
+        realized = st.get("realized_r") or []
+        out["n_closed"] = len(realized)
+        out["realized_r_total"] = round(sum(float(x) for x in realized), 3) if realized else 0.0
+    _position_cache["position"] = out
+    _position_cache["t"] = now
+    return out
+
+
+# ── Calendar (next high-impact events = order-time gate windows) ─────────
+def get_calendar() -> Dict[str, Any]:
+    now = time.time()
+    if now - _calendar_cache["t"] <= HEALTH_CACHE_TTL and _calendar_cache["calendar"]:
+        return _calendar_cache["calendar"]
+    cal = _read_json(FX_PROJECT_DIR / "results" / "calendar_events.json")
+    if cal is None:
+        out = {"available": False, "error": "calendar_events.json missing or unreadable"}
+    else:
+        events = cal if isinstance(cal, list) else cal.get("events") or []
+        now_iso = datetime.now(timezone.utc)
+        upcoming = []
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            try:
+                utc = datetime.fromisoformat(str(ev.get("utc", "")).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if utc.tzinfo is None:
+                utc = utc.replace(tzinfo=timezone.utc)  # feed stores naive UTC
+            if utc < now_iso:
+                continue
+            upcoming.append({"utc": ev.get("utc"), "title": ev.get("title"),
+                             "currencies": ev.get("currencies"),
+                             "impact": ev.get("impact"),
+                             "hours_away": round((utc - now_iso).total_seconds() / 3600.0, 1)})
+        upcoming.sort(key=lambda e: e["utc"] or "")
+        out = {"available": True, "now_utc": now_iso.strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "count": len(upcoming), "events": upcoming[:8]}
+    _calendar_cache["calendar"] = out
+    _calendar_cache["t"] = now
+    return out
+
+
 # ── HTTP handlers (None = handled; never return a value) ─────────────────
 def handle_fx_notes_get(handler, parsed) -> None:
     try:
@@ -305,3 +493,35 @@ def handle_fx_health_get(handler, parsed) -> None:
     except Exception as e:  # noqa: BLE001
         logger.error("fx_bridge health error: %s", e)
         bad(handler, f"fx health error: {e}")
+
+
+def handle_fx_gate_get(handler, parsed) -> None:
+    try:
+        j(handler, get_gate())
+    except Exception as e:  # noqa: BLE001
+        logger.error("fx_bridge gate error: %s", e)
+        bad(handler, f"fx gate error: {e}")
+
+
+def handle_fx_actions_get(handler, parsed) -> None:
+    try:
+        j(handler, get_actions())
+    except Exception as e:  # noqa: BLE001
+        logger.error("fx_bridge actions error: %s", e)
+        bad(handler, f"fx actions error: {e}")
+
+
+def handle_fx_position_get(handler, parsed) -> None:
+    try:
+        j(handler, get_position())
+    except Exception as e:  # noqa: BLE001
+        logger.error("fx_bridge position error: %s", e)
+        bad(handler, f"fx position error: {e}")
+
+
+def handle_fx_calendar_get(handler, parsed) -> None:
+    try:
+        j(handler, get_calendar())
+    except Exception as e:  # noqa: BLE001
+        logger.error("fx_bridge calendar error: %s", e)
+        bad(handler, f"fx calendar error: {e}")

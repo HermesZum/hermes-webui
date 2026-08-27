@@ -38,3 +38,12 @@
 .fx-note-date { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .fx-loading, .fx-error, .fx-muted { color: var(--muted); font-size: 13px; }
 .fx-error { color: #dc2626; }
+/* Gate / actions / position / calendar sections */
+.fx-verdict { font-size: 14px; font-weight: 600; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 14px; }
+.fx-verdict.fx-badge-pass { border-color: color-mix(in srgb, #22c55e 45%, var(--border)); background: color-mix(in srgb, #22c55e 8%, transparent); color: #16a34a; }
+.fx-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 4px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.fx-row:last-child { border-bottom: none; }
+.fx-row-alert { background: color-mix(in srgb, #f59e0b 8%, transparent); border-radius: 4px; }
+.fx-badge-pass { background: color-mix(in srgb, #22c55e 18%, transparent); color: #16a34a; }
+.fx-badge-fail { background: color-mix(in srgb, #ef4444 18%, transparent); color: #dc2626; }
+.fx-badge-warn { background: color-mix(in srgb, #f59e0b 18%, transparent); color: #d97706; }

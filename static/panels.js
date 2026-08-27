@@ -5396,12 +5396,16 @@ async function loadFx(force) {
   if (force) _fxData = null;
   if (!_fxData) {
     try {
-      const [health, reports, notes] = await Promise.all([
+      const [health, reports, notes, gate, actions, position, calendar] = await Promise.all([
         api('/api/fx/health', {cache:'no-store', timeoutMs:15000}),
         api('/api/fx/reports', {cache:'no-store', timeoutMs:15000}),
-        api('/api/fx/notes', {cache:'no-store', timeoutMs:15000})
+        api('/api/fx/notes', {cache:'no-store', timeoutMs:15000}),
+        api('/api/fx/gate', {cache:'no-store', timeoutMs:15000}),
+        api('/api/fx/actions', {cache:'no-store', timeoutMs:15000}),
+        api('/api/fx/position', {cache:'no-store', timeoutMs:15000}),
+        api('/api/fx/calendar', {cache:'no-store', timeoutMs:15000})
       ]);
-      _fxData = {health, reports, notes};
+      _fxData = {health, reports, notes, gate, actions, position, calendar};
     } catch (e) {
       menu.innerHTML = `<div style="padding:12px;color:var(--accent);font-size:12px">${esc('FX: ' + (e && e.message ? e.message : e))}</div>`;
       return;
@@ -5484,9 +5488,13 @@ function _fxSetFilter(t) { _fxFilter = t === _fxFilter ? '' : t; _renderFxPanel(
 // ── Sections (Memory pattern: side-menu items + main detail view) ──
 // Each section = one entry + one render fn; add new sections here.
 const FX_SECTIONS = [
-  { key: 'health',  labelKey: 'fx_health',  fallback: 'Health',  icon: 'activity', dataKey: 'health',  render: () => _fxRenderHealth((_fxData.health || {})) },
-  { key: 'reports', labelKey: 'fx_reports', fallback: 'Reports', icon: 'file-text', dataKey: 'reports', render: () => _fxRenderReports((_fxData.reports || {})) },
-  { key: 'notes',   labelKey: 'fx_notes',   fallback: 'Notes',   icon: 'book-open', dataKey: 'notes',   render: () => _fxRenderNotes((_fxData.notes || {})) },
+  { key: 'gate',     labelKey: 'fx_gate',     fallback: 'Graduation Gate', icon: 'award',   dataKey: 'gate',     render: () => _fxRenderGate((_fxData.gate || {})) },
+  { key: 'actions',  labelKey: 'fx_actions',  fallback: 'Action Required', icon: 'bell',    dataKey: 'actions',  render: () => _fxRenderActions((_fxData.actions || {})) },
+  { key: 'position', labelKey: 'fx_position', fallback: 'Live Position',   icon: 'crosshair', dataKey: 'position', render: () => _fxRenderPosition((_fxData.position || {})) },
+  { key: 'calendar', labelKey: 'fx_calendar', fallback: 'Calendar',        icon: 'clock',   dataKey: 'calendar', render: () => _fxRenderCalendar((_fxData.calendar || {})) },
+  { key: 'health',   labelKey: 'fx_health',   fallback: 'Health',          icon: 'activity', dataKey: 'health',  render: () => _fxRenderHealth((_fxData.health || {})) },
+  { key: 'reports',  labelKey: 'fx_reports',  fallback: 'Reports',         icon: 'file-text', dataKey: 'reports', render: () => _fxRenderReports((_fxData.reports || {})) },
+  { key: 'notes',    labelKey: 'fx_notes',    fallback: 'Notes',           icon: 'book-open', dataKey: 'notes',   render: () => _fxRenderNotes((_fxData.notes || {})) },
 ];
 let _currentFxSection = null;
 
@@ -5494,6 +5502,10 @@ function _fxIcon(key) {
   // Minimal inline icon set (stroke style matches the app's SVG icons)
   const icons = {
     activity: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+    award: '<circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>',
+    bell: '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
+    crosshair: '<circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/>',
+    clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
     'file-text': '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
     'book-open': '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
     chart: '<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>',
@@ -5546,6 +5558,94 @@ function _renderFxDetail() {
     ? `<div class="fx-error">${esc(_fxData[s.dataKey].error)}</div>` : '';
   body.innerHTML = err + s.render();
   body.style.display = '';
+}
+
+// ── Section renderers: graduation gate ──────────────────────────────────
+function _fxPassBadge(pass) {
+  if (pass === true) return '<span class="fx-badge fx-badge-pass">PASS</span>';
+  if (pass === false) return '<span class="fx-badge fx-badge-fail">PENDING</span>';
+  return '<span class="fx-badge">?</span>';
+}
+
+function _fxRenderGate(g) {
+  if (!g.available) return `<div class="fx-error">${esc(g.error || 'gate unavailable')}</div>`;
+  const crit = (g.criteria || []).map(c => `
+    <div class="fx-row">
+      <span>${esc(c.label)}${c.note ? ` <small style="color:var(--muted)">(${esc(c.note)})</small>` : ''}</span>
+      <span>${_fxPassBadge(c.pass)} <b>${c.value === null || c.value === undefined ? '—' : esc(String(c.value))}</b></span>
+    </div>`).join('');
+  const verdictCls = g.ready ? 'fx-badge-pass' : '';
+  return `<div class="main-view-content">
+    <div class="fx-verdict ${verdictCls}">${esc(g.verdict || '')}</div>
+    <div class="fx-section">
+      <div class="fx-section-title">Criteria</div>
+      ${crit}
+    </div>
+    <div class="fx-section">
+      <div class="fx-section-title">Ledger</div>
+      <div class="fx-row"><span>Trades</span><b>${g.n_trades}</b></div>
+      <div class="fx-row"><span>Total R</span><b>${g.total_r}</b></div>
+      <div class="fx-row"><span>Expectancy</span><b>${g.expectancy_R} R</b></div>
+      <div class="fx-row"><span>Win rate</span><b>${g.win_rate_pct}%</b></div>
+    </div>
+  </div>`;
+}
+
+// ── Section renderers: actions ──────────────────────────────────────────
+function _fxSevBadge(sev) {
+  const cls = { HALT: 'fx-badge-fail', ACTION: 'fx-badge-warn' }[sev] || '';
+  return `<span class="fx-badge ${cls}">${esc(sev || 'WATCH')}</span>`;
+}
+
+function _fxRenderActions(a) {
+  if (!a.available) return `<div class="fx-error">${esc(a.error || 'actions unavailable')}</div>`;
+  const evs = a.events || [];
+  if (!evs.length) return `<div class="fx-verdict fx-badge-pass">CLEAR — nothing needs attention</div>`;
+  const rows = evs.map(e => `
+    <div class="fx-row">
+      <span><small style="color:var(--muted)">${esc(e.source || '')}</small><br>${esc(e.text || '')}</span>
+      ${_fxSevBadge(e.severity)}
+    </div>`).join('');
+  return `<div class="main-view-content"><div class="fx-section">${rows}</div></div>`;
+}
+
+// ── Section renderers: live position ────────────────────────────────────
+function _fxRenderPosition(p) {
+  if (!p.available) return `<div class="fx-error">${esc(p.error || 'position unavailable')}</div>`;
+  const pos = p.positions || [];
+  if (!pos.length) return `<div class="fx-verdict">No open positions — trader flat${p.halted ? ' (HALTED)' : ''}</div>`;
+  const cards = pos.map(o => `
+    <div class="fx-section">
+      <div class="fx-section-title">${esc(o.pair)} · ${esc(o.dir || '').toUpperCase()}${o.half_closed ? ' · half banked' : ''}</div>
+      <div class="fx-row"><span>Entry</span><b>${esc(String(o.entry))}</b></div>
+      <div class="fx-row"><span>Stop</span><b>${esc(String(o.stop))}</b></div>
+      <div class="fx-row"><span>Entry time</span><b>${esc(String(o.entry_time || ''))}</b></div>
+      <div class="fx-row"><span>ATR (pips)</span><b>${esc(String(o.atr_pips))}</b></div>
+      <div class="fx-row"><span>Banked R</span><b>${o.banked_r}</b></div>
+    </div>`).join('');
+  return `<div class="main-view-content">${p.halted ? '<div class="fx-error">TRADER HALTED</div>' : ''}${cards}
+    <div class="fx-section"><div class="fx-section-title">Session</div>
+      <div class="fx-row"><span>Closed trades</span><b>${p.n_closed}</b></div>
+      <div class="fx-row"><span>Realized R</span><b>${p.realized_r_total}</b></div>
+    </div></div>`;
+}
+
+// ── Section renderers: calendar ─────────────────────────────────────────
+function _fxRenderCalendar(c) {
+  if (!c.available) return `<div class="fx-error">${esc(c.error || 'calendar unavailable')}</div>`;
+  const evs = c.events || [];
+  if (!evs.length) return `<div class="fx-verdict">No upcoming high-impact events this week</div>`;
+  const rows = evs.map(e => {
+    const cur = (e.currencies || []).join('/');
+    const lock = e.hours_away <= 0.083; // 5 min before event
+    return `<div class="fx-row${lock ? ' fx-row-alert' : ''}">
+      <span><b>${esc(String(e.hours_away))}h</b> · ${esc(e.title || '')} <small style="color:var(--muted)">(${esc(cur)} · ${esc(e.impact || '')})</small></span>
+      <span><small>${esc(String(e.utc || ''))}</small></span>
+    </div>`;
+  }).join('');
+  return `<div class="main-view-content">
+    <div class="fx-section-title">Order-time gate: no entries 5 min before / 15 min after high-impact events</div>
+    <div class="fx-section">${rows}</div></div>`;
 }
 
 function _renderFxPanel() {
