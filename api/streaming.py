@@ -1887,9 +1887,10 @@ def _mark_latest_assistant_tool_limit_status(messages) -> bool:
         msg.setdefault('_statusCard', {
             'title': 'Tool iteration limit reached',
             'subtitle': 'Stopped because the tool iteration limit was reached.',
+            'terminalState': 'tool_limit_reached',
             'rows': [
                 {'label': 'State', 'value': 'Limit reached'},
-                {'label': 'Next step', 'value': 'Start a new turn to continue.'},
+                {'label': 'Next step', 'value': 'Type a message to continue in this session, or use the button below to fork with full context.'},
             ],
         })
         return True
@@ -10339,8 +10340,8 @@ def _run_agent_streaming(
                         _err_label = 'Tool iteration limit reached'
                         _err_type = 'tool_limit_reached'
                         _err_hint = (
-                            'The agent reached its configured tool iteration limit before producing '
-                            'a final answer. Start a narrower follow-up or increase agent.max_turns.'
+                            'Type a message to continue in this session, or use /branch to fork '
+                            'this conversation — with all context — into a new session.'
                         )
                         _err_str = (
                             'The agent reached its configured tool iteration limit before producing '

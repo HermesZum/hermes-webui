@@ -406,6 +406,21 @@ function _statusCardHtml(card){
       <span class="status-card-label">${esc(row.label||'')}</span>
       <span class="status-card-value">${esc(row.value||'')}</span>
     </div>`).join('');
+  // #tool-limit-continuity: when a turn ends in a terminal state that still
+  // leaves the session usable (iteration ceiling, etc.), surface the
+  // continue-in-place / fork-with-context options on the card itself so the
+  // user is never left guessing what to do next. Session id rides along so
+  // the fork targets the terminal session even if the user's view drifts.
+  const terminalState=String(card.terminalState||'').trim();
+  let continuityHtml='';
+  if(terminalState==='tool_limit_reached'&&typeof esc==='function'){
+    const _forkIcon=(typeof li==='function')?li('git-branch',13):'';
+    const _forkSession=esc(sessionId||(S&&S.session&&S.session.session_id)||'');
+    continuityHtml=`<div class="status-card-continuity">
+      <span class="status-card-continuity-hint">Continue here, or type <code>/branch</code> to fork this conversation — with all context — into a new session.</span>
+      <button class="status-card-continuity-action" type="button" data-fork-session="${_forkSession}" onclick="branchCurrentSession();event.stopPropagation()">${_forkIcon}<span>${esc(t('cmd_branch')||'Fork with context')}</span></button>
+    </div>`;
+  }
   return `<div class="status-card" data-status-card="1">
     <div class="status-card-head">
       <div class="status-card-title-wrap">
@@ -415,6 +430,7 @@ function _statusCardHtml(card){
       ${copyBtn}
     </div>
     <div class="status-card-grid">${rowHtml}</div>
+    ${continuityHtml}
   </div>`;
 }
 
@@ -8578,6 +8594,16 @@ function copyStatusSessionId(btn){
     btn.classList.add('copied');
     setTimeout(()=>{btn.innerHTML=orig;btn.classList.remove('copied');},1500);
   }).catch(()=>showToast(t('copy_failed')));
+}
+// Bridge from the status-card "Fork with context" button to the existing
+// /branch slash-command handler.  cmdBranch forks S.session (the currently
+// viewed session — the one whose card was rendered) with full history.
+// No-op if the user navigated away in the meantime (S.session changed).
+function branchCurrentSession(){
+  if(typeof cmdBranch==='function'){ cmdBranch(''); return; }
+  // Fallback: drive the composer + send so the slash handler runs normally.
+  const composer=$('msg');
+  if(composer){ composer.value='/branch'; if(typeof autoResize==='function') autoResize(); if(typeof send==='function') send(); }
 }
 function copyMsg(btn){
   const row=btn.closest('[data-raw-text]');
