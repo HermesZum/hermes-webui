@@ -1,9 +1,4 @@
-/* ═══ FX panel sub-tabs ═══ */
-.fx-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); padding-bottom: 0; }
-.fx-tab { border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 500; padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.fx-tab:hover { color: var(--fg, inherit); }
-.fx-tab-on { color: var(--accent); border-bottom-color: var(--accent); }
-/* ═══ FX panel (fx-tracker) ═══ */
+/* ═══ FX panel (fx-tracker) — Memory-pattern side menu + main detail ═══ */
 .fx-panel-body { overflow-y: auto; }
 .fx-section { margin: 0 0 20px; }
 .fx-section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }

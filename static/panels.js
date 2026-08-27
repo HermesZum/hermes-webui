@@ -5388,11 +5388,10 @@ let _fxData = null;        // { health, reports, notes }
 let _fxFilter = '';        // note-type filter chip
 
 async function loadFx(force) {
-  const content = $('fxPanelContent');
-  if (!content) return;
+  const menu = $('fxPanelMenu');
+  if (!menu) return;
   if (force) _fxData = null;
   if (!_fxData) {
-    content.innerHTML = `<div class="fx-loading">${esc((window.I18N && I18N.t) ? I18N.t('loading') : 'Loading...')}</div>`;
     try {
       const [health, reports, notes] = await Promise.all([
         api('/api/fx/health', {cache:'no-store', timeoutMs:15000}),
@@ -5401,7 +5400,7 @@ async function loadFx(force) {
       ]);
       _fxData = {health, reports, notes};
     } catch (e) {
-      content.innerHTML = `<div class="fx-error">${esc('FX panel error: ' + (e && e.message ? e.message : e))}</div>`;
+      menu.innerHTML = `<div style="padding:12px;color:var(--accent);font-size:12px">${esc('FX: ' + (e && e.message ? e.message : e))}</div>`;
       return;
     }
   }
@@ -5479,30 +5478,76 @@ function _fxRenderNotes(n) {
 
 function _fxSetFilter(t) { _fxFilter = t === _fxFilter ? '' : t; _renderFxPanel(); }
 
-// ── Sub-tabs: each concern renders in its own view; add new tabs here ──
-const FX_TABS = [
-  { id: 'health',  labelKey: 'fx_health',  fallback: 'Health',  render: () => _fxRenderHealth((_fxData.health || {})) },
-  { id: 'reports', labelKey: 'fx_reports', fallback: 'Reports', render: () => _fxRenderReports((_fxData.reports || {})) },
-  { id: 'notes',   labelKey: 'fx_notes',   fallback: 'Notes',   render: () => _fxRenderNotes((_fxData.notes || {})) },
+// ── Sections (Memory pattern: side-menu items + main detail view) ──
+// Each section = one entry + one render fn; add new sections here.
+const FX_SECTIONS = [
+  { key: 'health',  labelKey: 'fx_health',  fallback: 'Health',  icon: 'activity', dataKey: 'health',  render: () => _fxRenderHealth((_fxData.health || {})) },
+  { key: 'reports', labelKey: 'fx_reports', fallback: 'Reports', icon: 'file-text', dataKey: 'reports', render: () => _fxRenderReports((_fxData.reports || {})) },
+  { key: 'notes',   labelKey: 'fx_notes',   fallback: 'Notes',   icon: 'book-open', dataKey: 'notes',   render: () => _fxRenderNotes((_fxData.notes || {})) },
 ];
-let _fxTab = 'health';
+let _currentFxSection = null;
 
-function _fxSetTab(id) { _fxTab = id; _renderFxPanel(); }
+function _fxIcon(key) {
+  // Minimal inline icon set (stroke style matches the app's SVG icons)
+  const icons = {
+    activity: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>',
+    'file-text': '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+    'book-open': '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+    chart: '<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>',
+  };
+  const p = icons[key] || icons.chart;
+  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+}
+
+function openFxSection(key, el) {
+  _currentFxSection = key;
+  document.querySelectorAll('#fxPanelMenu .side-menu-item').forEach(e => e.classList.remove('active'));
+  if (el) el.classList.add('active');
+  _renderFxDetail();
+  if (typeof _closeMobileSidebarAfterPanelSelection === 'function') _closeMobileSidebarAfterPanelSelection();
+}
+
+function _renderFxMenu() {
+  const panel = $('fxPanelMenu');
+  if (!panel) return;
+  panel.innerHTML = '';
+  for (const s of FX_SECTIONS) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'side-menu-item';
+    if (_currentFxSection === s.key) el.classList.add('active');
+    el.innerHTML = `${_fxIcon(s.icon)}<span>${esc(_fxT(s.labelKey, s.fallback))}</span>`;
+    el.onclick = () => openFxSection(s.key, el);
+    panel.appendChild(el);
+  }
+}
+
+function _renderFxDetail() {
+  const title = $('fxDetailTitle');
+  const body = $('fxDetailBody');
+  const empty = $('fxDetailEmpty');
+  const refresh = $('fxDetailRefresh');
+  if (!title || !body || !empty) return;
+  const s = FX_SECTIONS.find(x => x.key === _currentFxSection);
+  if (!s || !_fxData) {
+    title.textContent = '';
+    body.style.display = 'none';
+    if (refresh) refresh.style.display = 'none';
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+  if (refresh) refresh.style.display = '';
+  title.textContent = _fxT(s.labelKey, s.fallback);
+  const err = _fxData[s.dataKey] && _fxData[s.dataKey].error
+    ? `<div class="fx-error">${esc(_fxData[s.dataKey].error)}</div>` : '';
+  body.innerHTML = err + s.render();
+  body.style.display = '';
+}
 
 function _renderFxPanel() {
-  const content = $('fxPanelContent');
-  if (!content || !_fxData) return;
-  const tabsHtml = FX_TABS.map(t =>
-    `<button class="fx-tab${_fxTab === t.id ? ' fx-tab-on' : ''}" onclick="_fxSetTab('${t.id}')">${esc(_fxT(t.labelKey, t.fallback))}</button>`
-  ).join('');
-  const active = FX_TABS.find(t => t.id === _fxTab) || FX_TABS[0];
-  const errHtml = (k) => (_fxData[k] && _fxData[k].error) ? `<div class="fx-error">${esc(_fxData[k].error)}</div>` : '';
-  const errKey = { health: 'health', reports: 'reports', notes: 'notes' }[active.id];
-  content.innerHTML = `<div class="main-view-content">
-    <div class="fx-tabs">${tabsHtml}</div>
-    ${errHtml(errKey)}
-    ${active.render()}
-  </div>`;
+  _renderFxMenu();
+  _renderFxDetail();
 }
 
 function _renderMemoryDetail(section) {

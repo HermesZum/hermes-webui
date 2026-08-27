@@ -259,7 +259,7 @@
       <div class="skills-search sidebar-search"><svg class="sidebar-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg><input id="skillsSearch" type="search" placeholder="Search skills..." data-i18n-placeholder="search_skills" oninput="filterSkills()" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore="true" data-form-type="other"></div>
       <div class="skills-list" id="skillsList"><div style="padding:12px;color:var(--muted);font-size:12px" data-i18n="loading">Loading...</div></div>
     </div>
-    <!-- FX panel -->
+    <!-- FX panel (Memory pattern: side menu + main detail view) -->
     <div class="panel-view" id="panelFx">
       <div class="panel-head">
         <span data-i18n="tab_fx">FX</span>
@@ -267,7 +267,7 @@
           <button class="panel-head-btn has-tooltip has-tooltip--bottom" id="fxRefreshBtn" onclick="loadFx(true)" data-tooltip="Refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
         </div>
       </div>
-      <div class="panel-body fx-panel-body" id="fxPanelContent"></div>
+      <div class="side-menu" id="fxPanelMenu"><div style="padding:12px;color:var(--muted);font-size:12px" data-i18n="loading">Loading...</div></div>
     </div>
 
     <div class="panel-view" id="panelMemory">
@@ -824,6 +824,20 @@
         <svg class="main-view-empty-icon" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2z"/></svg>
         <div class="main-view-empty-title" data-i18n="memory_empty_title">Select a memory section</div>
         <div class="main-view-empty-sub" data-i18n="memory_empty_sub">Pick a section from the sidebar to view or edit its contents.</div>
+      </div>
+    </div>
+    <div id="mainFx" class="main-view">
+      <div class="main-view-header">
+        <div class="main-view-title" id="fxDetailTitle"></div>
+        <div class="main-view-actions">
+          <button id="fxDetailRefresh" class="panel-head-btn has-tooltip has-tooltip--bottom" data-tooltip="Refresh" data-i18n-title="refresh" aria-label="Refresh" onclick="loadFx(true)" style="display:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+        </div>
+      </div>
+      <div class="main-view-body" id="fxDetailBody" style="display:none"></div>
+      <div class="main-view-empty" id="fxDetailEmpty">
+        <svg class="main-view-empty-icon" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-6 4 3 5-8"/></svg>
+        <div class="main-view-empty-title" data-i18n="fx_empty_title">Select an FX section</div>
+        <div class="main-view-empty-sub" data-i18n="fx_empty_sub">Pick a section from the FX menu to view project health, reports, and decisions.</div>
       </div>
     </div>
     <div id="mainTasks" class="main-view">
