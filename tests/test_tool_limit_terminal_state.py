@@ -181,19 +181,20 @@ def test_historical_synthetic_summary_prompt_does_not_mark_normal_result_as_tool
     assert streaming._agent_result_tool_limit_reached(result) is False
 
 
-def test_tool_limit_with_final_answer_marks_latest_assistant_status_card():
+def test_tool_limit_with_final_answer_gets_no_status_card():
+    """Graceful completion (final answer delivered) is NOT an error: no
+    terminal status card, no _terminal_state annotation. The agent's own
+    closing text is the notice (Clemente, 2026-08-27 — card-per-capped-turn
+    read as alarm spam)."""
     messages = [
         {"role": "user", "content": "Do the long task."},
         {"role": "assistant", "content": "I reached the limit; here is the summary."},
     ]
 
     assert streaming._session_lacks_final_assistant_answer(messages) is False
-    assert streaming._mark_latest_assistant_tool_limit_status(messages) is True
-
     assistant = messages[-1]
-    assert assistant["_terminal_state"] == "tool_limit_reached"
-    assert assistant["_terminal_reason"] == "max_iterations"
-    assert assistant["_statusCard"]["title"] == "Tool iteration limit reached"
+    assert "_terminal_state" not in assistant
+    assert "_statusCard" not in assistant
 
 
 def test_tool_limit_without_final_answer_is_no_final_terminal_state_after_filtering():
@@ -282,8 +283,10 @@ def test_streaming_tool_limit_with_final_answer_persists_clean_done_state(tmp_pa
     )
     assistant = payload["messages"][-1]
     assert assistant["role"] == "assistant"
-    assert assistant["_terminal_state"] == "tool_limit_reached"
-    assert assistant["_statusCard"]["title"] == "Tool iteration limit reached"
+    # Graceful completion: no terminal card, no _terminal_state on the message.
+    assert "_terminal_state" not in assistant
+    assert "_statusCard" not in assistant
+    assert assistant["content"] == "I reached the limit; here is the summary."
 
 
 @pytest.mark.parametrize("marker", ["_verification_stop_synthetic", "_pre_verify_synthetic"])
@@ -740,8 +743,7 @@ def test_streaming_tool_limit_with_fallback_final_response_surfaces_closure_text
 
     # The user sees the graceful fallback, not a bare tool_limit_reached error.
     # Either (a) we synthesized the fallback here, or (b) the agent guarantee
-    # already added an assistant row and `_mark_latest_assistant_tool_limit_status`
-    # attached the status card. Both routes satisfy the contract.
+    # already added an assistant row. Both routes satisfy the contract.
     assert not [
         ap for ev, ap in events if ev == "apperror"
         and ap.get("type") == "tool_limit_reached"
@@ -750,13 +752,13 @@ def test_streaming_tool_limit_with_fallback_final_response_surfaces_closure_text
     assert done_payloads, "expected done SSE payload"
     assert done_payloads[-1]["terminal_state"] == "tool_limit_reached"
 
-    # Fallback text is shown as a final assistant message and is annotated
-    # with the status card so the UI can render the 'limit reached' chip.
+    # Fallback text is shown as a final assistant message with no status
+    # card — graceful closure text is the notice itself (Clemente, 2026-08-27).
     assistant = payload["messages"][-1]
     assert assistant["role"] == "assistant"
     assert assistant["content"] == graceful
-    assert assistant["_terminal_state"] == "tool_limit_reached"
-    assert assistant["_statusCard"]["title"] == "Tool iteration limit reached"
+    assert "_terminal_state" not in assistant
+    assert "_statusCard" not in assistant
     # Synthetic scaffolding turn was still dropped, even after fallback injection.
     assert all(
         message.get("content") != streaming._MAX_ITERATION_SUMMARY_REQUEST
@@ -791,7 +793,9 @@ def test_streaming_tool_limit_with_fallback_does_not_double_inject_when_assistan
         if m.get("role") == "assistant" and m.get("content") == summary
     ]
     assert len(assistant_msgs) == 1, "fallback must not duplicate the existing summary"
-    assert assistant_msgs[0]["_terminal_state"] == "tool_limit_reached"
+    # Graceful completion: no message-level terminal annotations anymore.
+    assert "_terminal_state" not in assistant_msgs[0]
+    assert "_statusCard" not in assistant_msgs[0]
 
 
 def test_maybe_inject_max_iteration_summary_fallback_unit():
@@ -866,9 +870,10 @@ def test_streaming_tool_limit_partial_with_final_answer_suppresses_false_no_resp
         if message.get("role") == "assistant"
         and message.get("content") == "I reached the limit; here is the summary."
     )
-    assert assistant["_terminal_state"] == "tool_limit_reached"
-    assert assistant["_terminal_reason"] == "max_iterations"
-    assert assistant["_statusCard"]["title"] == "Tool iteration limit reached"
+    # Graceful completion: done payload still carries terminal metadata,
+    # but the message itself gets no terminal card/annotation.
+    assert "_terminal_state" not in assistant
+    assert "_statusCard" not in assistant
     assert payload["messages"][-1] is assistant
 
 

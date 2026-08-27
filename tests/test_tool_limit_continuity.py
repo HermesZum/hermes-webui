@@ -1,16 +1,15 @@
-# Tests for the tool-limit status card continuity affordance.
+# Tests for the tool-limit terminal UX contract (revised 2026-08-27).
 #
-# Verifies that:
-# 1. The backend status card carries terminalState for the frontend.
-# 2. The "Next step" row guides the user to continue or fork.
-# 3. _statusCardHtml renders a fork-with-context button for tool_limit_reached.
-# 4. branchCurrentSession() bridge delegates to cmdBranch.
-# 5. The apperror hint mentions /branch.
+# Contract (per Clemente): a tool_limit_reached turn that DELIVERED a final
+# answer is NOT an error — the agent's own closing text is the notice, and
+# no terminal status card is attached (card-per-capped-turn read as alarm
+# spam). The genuine-truncation path (no final answer) still surfaces the
+# tool_limit_reached apperror with guidance. This file pins the apperror
+# guidance; flow tests live in test_tool_limit_terminal_state.py.
 
 import os
 
 _SRC = os.path.join(os.path.dirname(__file__), "..")
-ROOT = os.path.dirname(_SRC)
 
 
 def _read(path):
@@ -18,59 +17,20 @@ def _read(path):
         return f.read()
 
 
-# ── Backend: status card carries terminalState ──────────────────────────────
-
-def test_status_card_includes_terminal_state():
-    from api import streaming
-    messages = [
-        {"role": "user", "content": "Do the long task."},
-        {"role": "assistant", "content": "I reached the limit; here is the summary."},
-    ]
-    assert streaming._mark_latest_assistant_tool_limit_status(messages) is True
-    card = messages[-1]["_statusCard"]
-    assert card["terminalState"] == "tool_limit_reached"
-
-
-def test_status_card_next_step_guides_continue_or_fork():
-    from api import streaming
-    messages = [
-        {"role": "user", "content": "Do the long task."},
-        {"role": "assistant", "content": "Summary here."},
-    ]
-    streaming._mark_latest_assistant_tool_limit_status(messages)
-    rows = messages[-1]["_statusCard"]["rows"]
-    next_step = next(r["value"] for r in rows if r["label"] == "Next step")
-    assert "continue" in next_step.lower()
-    assert "fork" in next_step.lower() or "/branch" in next_step
-
-
-# ── Frontend: _statusCardHtml renders continuity button ──────────────────────
-
-def test_ui_js_renders_continuity_button_for_tool_limit():
-    src = _read("static/ui.js")
-    assert "terminalState==='tool_limit_reached'" in src
-    assert "branchCurrentSession()" in src
-    assert "function branchCurrentSession()" in src
-    assert "cmdBranch('')" in src
-
-
-def test_ui_js_branch_current_session_guards_cmdBranch():
-    src = _read("static/ui.js")
-    assert "typeof cmdBranch==='function'" in src
-
-
-def test_style_css_has_continuity_styles():
-    src = _read("static/style.css")
-    assert ".status-card-continuity" in src
-    assert ".status-card-continuity-action" in src
-    assert ".status-card-continuity-hint" in src
-
-
-# ── Backend: apperror hint mentions /branch ──────────────────────────────────
-
 def test_streaming_hint_mentions_branch():
     src = _read("api/streaming.py")
     idx = src.find("_err_type = 'tool_limit_reached'")
     assert idx != -1, "tool_limit_reached error type must exist"
     block = src[idx:idx + 600]
     assert "/branch" in block, "Hint should mention /branch for continuation"
+
+
+def test_no_status_card_attached_on_graceful_tool_limit():
+    """The graceful path (final answer delivered) must not attach a status
+    card — the marking function was removed and the flow must not set
+    _statusCard on the delivered assistant message."""
+    src = _read("api/streaming.py")
+    assert "_mark_latest_assistant_tool_limit_status" not in src, (
+        "removed function must not linger as dead code"
+    )
+    assert "elif _tool_limit_reached and not _session_lacks_final_assistant_answer" not in src

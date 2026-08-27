@@ -1843,11 +1843,9 @@ def _maybe_inject_max_iteration_summary_fallback(messages, result) -> list:
 
     When ``_tool_limit_reached`` is true and ``messages`` ends without a final
     assistant answer, inject ``result['final_response']`` as a new assistant
-    turn so ``_mark_latest_assistant_tool_limit_status`` can attach the status
-    card in the normal flow and the user sees the same closure text as
-    hermes-agent. Returns the (possibly new) messages list; does nothing when
-    a usable assistant answer already exists or when ``result`` carries no
-    graceful fallback text.
+    turn so the user sees the same closure text as hermes-agent. Returns the
+    (possibly new) messages list; does nothing when a usable assistant answer
+    already exists or when ``result`` carries no graceful fallback text.
     """
     if not isinstance(result, dict):
         return list(messages or [])
@@ -1862,39 +1860,6 @@ def _maybe_inject_max_iteration_summary_fallback(messages, result) -> list:
     # synthetic-scaffolding flag convention already used elsewhere (#5334).
     out.append({"role": "assistant", "content": fallback, "_max_iteration_summary_fallback": True})
     return out
-
-
-def _mark_latest_assistant_tool_limit_status(messages) -> bool:
-    """Annotate the latest usable assistant final answer as limit-stopped."""
-    for msg in reversed(list(messages or [])):
-        if not isinstance(msg, dict):
-            continue
-        if msg.get('_error') or msg.get('role') != 'assistant':
-            continue
-        content = msg.get('content')
-        if isinstance(content, list):
-            text = '\n'.join(
-                str(part.get('text') or part.get('content') or '')
-                for part in content
-                if isinstance(part, dict)
-            )
-        else:
-            text = str(content or '')
-        if msg.get('tool_calls') or not text.strip():
-            continue
-        msg['_terminal_state'] = 'tool_limit_reached'
-        msg['_terminal_reason'] = 'max_iterations'
-        msg.setdefault('_statusCard', {
-            'title': 'Tool iteration limit reached',
-            'subtitle': 'Stopped because the tool iteration limit was reached.',
-            'terminalState': 'tool_limit_reached',
-            'rows': [
-                {'label': 'State', 'value': 'Limit reached'},
-                {'label': 'Next step', 'value': 'Type a message to continue in this session, or use the button below to fork with full context.'},
-            ],
-        })
-        return True
-    return False
 
 
 def _session_has_cancel_marker(session) -> bool:
@@ -10183,8 +10148,14 @@ def _run_agent_streaming(
                     _terminal_failure = False
                 if _terminal_failure:
                     _assistant_added = False
-                elif _tool_limit_reached and not _session_lacks_final_assistant_answer(s.messages):
-                    _mark_latest_assistant_tool_limit_status(s.messages)
+                # tool_limit_reached with a delivered final answer is NOT
+                # surfaced as a terminal status card (Clemente, 2026-08-27):
+                # the agent's own closing text already states it reached the
+                # limit, and a status card on every long-but-successful turn
+                # read as alarm spam. The done payload still carries
+                # terminal_state='tool_limit_reached' (metadata only). The
+                # genuine-truncation path (no final answer) still routes
+                # through _terminal_failure → apperror with guidance.
                 # _token_sent tracks whether on_token() was called (any streamed text)
                 if _terminal_failure or (not _assistant_added and not _token_sent):
                     if cancel_event.is_set():
