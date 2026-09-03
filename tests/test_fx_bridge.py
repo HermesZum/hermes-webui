@@ -170,6 +170,22 @@ class FxBridgeReports(unittest.TestCase):
         self.assertEqual(cards["killcriteria_sim"]["data"]["gate_pass_applied"], True)
         self.assertEqual(cards["killcriteria_sim"]["data"]["briefing_line"], "MC: P(pause)=8.4%")
 
+    def test_reports_per_symbol_gate_schema(self):
+        # analyzer refactor 2026-09-02: per-symbol gate is authoritative
+        (self.results / "killcriteria_sim.json").write_text(json.dumps({
+            "authoritative_gate": "per_symbol_gate",
+            "gate_pass": False, "gate_pass_persymbol": True,
+            "applied_config_gate": {"status": "ok"},
+            "briefing_line": "MC per-symbol: GBPUSD Book E passes",
+        }), encoding="utf-8")
+        self.mod._invalidate_caches()
+        out = self.mod.list_reports()
+        cards = {c["key"]: c for c in out["reports"]}
+        d = cards["killcriteria_sim"]["data"]
+        self.assertEqual(d["authoritative_gate"], "per_symbol_gate")
+        self.assertEqual(d["gate_pass_persymbol"], True)
+        self.assertEqual(d["gate_pass"], False)  # legacy key still surfaced
+
     def test_corrupt_json_degrades_card(self):
         (self.results / "mc_report.json").write_text("{corrupt", encoding="utf-8")
         self.mod._invalidate_caches()
@@ -297,12 +313,28 @@ class FxBridgeGate(unittest.TestCase):
         self.mod, self.vault, self.results = _load_bridge(self.tmp)
 
     def _write_trades(self, rows):
-        lines = ["pair,date,dir,r_net,reason"]
+        # journal/paper_trades.csv schema (paper-trader ledger, audit 2026-09-03)
+        lines = ["trade_id,pair,dir,mode,entry_time,entry,stop,atr_pips,size_r,tp1_time,tp1_price,exit_time,exit_price,exit_reason,r_net,half_closed,notes"]
         lines += [",".join(r) for r in rows]
-        (self.results / "trades.csv").write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+        journal = self.tmp / "project" / "journal"
+        journal.mkdir(parents=True, exist_ok=True)
+        (journal / "paper_trades.csv").write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
+
+    def test_gate_reads_demo_ledger_not_backtest(self):
+        # results/trades.csv is a BACKTEST artifact — must be ignored
+        (self.results / "trades.csv").write_text("pair,date,dir,r_net,reason\r\nE1,2024-01-01,long,999.0,backtest\r\n", encoding="utf-8")
+        self._write_trades([("P-1", "EURUSD", "long", "paper", "2026-08-24T08:00:00+00:00", "1.1", "1.101", "15.0", "1.0", "", "", "2026-08-24T09:00:00+00:00", "1.101", "trail_or_stop", "0.9", "False", "")])
+        self.mod._invalidate_caches()
+        g = self.mod.get_gate()
+        self.assertTrue(g["available"])
+        self.assertEqual(g["n_trades"], 1)  # demo ledger only, not the 999R backtest row
+        self.assertIn("paper_trades.csv", g["source"])
 
     def test_gate_ready_when_n_and_expectancy_pass(self):
-        rows = [(f"E{i}", f"2026-08-{(i % 28) + 1:02d}", "long", "1.5", "trail/be") for i in range(25)]
+        rows = []
+        for i in range(25):
+            r = "1.5" if i % 2 == 0 else "-0.5"  # keep expectancy > 0, half wins
+            rows.append((f"P-{i}", "EURUSD", "long", "paper", f"2026-08-{(i % 28) + 1:02d}T08:00:00+00:00", "1.1", "1.101", "15.0", "1.0", "", "", f"2026-08-{(i % 28) + 1:02d}T09:00:00+00:00", "1.101", "trail_or_stop", r, "False", ""))
         self._write_trades(rows)
         self.mod._invalidate_caches()
         g = self.mod.get_gate()
@@ -312,15 +344,38 @@ class FxBridgeGate(unittest.TestCase):
         self.assertIn("READY", g["verdict"])
 
     def test_gate_pending_when_expectancy_negative(self):
-        rows = [(f"E{i}", f"2026-08-{(i % 28) + 1:02d}", "short", "-1.0", "initial-stop") for i in range(25)]
+        rows = []
+        for i in range(25):
+            rows.append((f"P-{i}", "EURUSD", "short", "paper", f"2026-08-{(i % 28) + 1:02d}T08:00:00+00:00", "1.1", "1.101", "15.0", "1.0", "", "", f"2026-08-{(i % 28) + 1:02d}T09:00:00+00:00", "1.101", "initial-stop", "-1.0", "False", ""))
         self._write_trades(rows)
         self.mod._invalidate_caches()
         g = self.mod.get_gate()
         self.assertFalse(g["ready"])
-        self.assertEqual(g["verdict"], "PENDING")
+        self.assertIn("PENDING", g["verdict"])
+        self.assertIn("25/20", g["verdict"])  # progress now shown in verdict
+        self.assertIn("-1.0", g["verdict"])
+
+    def test_gate_pending_when_few_trades(self):
+        rows = [("P-1", "EURUSD", "long", "paper", "2026-08-24T08:00:00+00:00", "1.1", "1.101", "15.0", "1.0", "", "", "2026-08-24T09:00:00+00:00", "1.101", "trail_or_stop", "0.9", "False", "")]
+        self._write_trades(rows)
+        self.mod._invalidate_caches()
+        g = self.mod.get_gate()
+        self.assertFalse(g["ready"])
+        self.assertIn("1/20", g["verdict"])
+
+    def test_gate_open_positions_from_paper_state(self):
+        self._write_trades([("P-1", "EURUSD", "long", "paper", "2026-08-24T08:00:00+00:00", "1.1", "1.101", "15.0", "1.0", "", "", "2026-08-24T09:00:00+00:00", "1.101", "trail_or_stop", "0.9", "False", "")])
+        data = self.tmp / "project" / "data"
+        data.mkdir(parents=True, exist_ok=True)
+        (data / "paper_state.json").write_text(json.dumps({"positions": {"EURUSD": {"dir": "long"}, "GBPUSD": {"dir": "short"}}, "realized_r": []}), encoding="utf-8")
+        self.mod._invalidate_caches()
+        g = self.mod.get_gate()
+        self.assertEqual(g["n_open"], 2)
 
     def test_gate_plan_followed_never_fabricated(self):
-        rows = [(f"E{i}", f"2026-08-{(i % 28) + 1:02d}", "long", "2.0", "data-end") for i in range(30)]
+        rows = []
+        for i in range(30):
+            rows.append((f"P-{i}", "EURUSD", "long", "paper", f"2026-08-{(i % 28) + 1:02d}T08:00:00+00:00", "1.1", "1.101", "15.0", "1.0", "", "", f"2026-08-{(i % 28) + 1:02d}T09:00:00+00:00", "1.101", "data-end", "2.0", "False", ""))
         self._write_trades(rows)
         self.mod._invalidate_caches()
         g = self.mod.get_gate()
@@ -331,8 +386,8 @@ class FxBridgeGate(unittest.TestCase):
         self.assertIsNone(plan_rows[0]["pass"])  # unknown, not pass/fail
 
     def test_gate_malformed_r_net_skipped(self):
-        rows = [("E1", "2026-08-01", "long", "abc", "stop"), ("E2", "2026-08-02", "long", "1.0", "be")]
-        self._write_trades(rows)
+        self._write_trades([("P-1", "EURUSD", "long", "paper", "2026-08-01T08:00:00+00:00", "1.1", "1.101", "15.0", "1.0", "", "", "2026-08-01T09:00:00+00:00", "1.101", "stop", "abc", "False", ""),
+                            ("P-2", "EURUSD", "long", "paper", "2026-08-02T08:00:00+00:00", "1.1", "1.101", "15.0", "1.0", "", "", "2026-08-02T09:00:00+00:00", "1.101", "be", "1.0", "False", "")])
         self.mod._invalidate_caches()
         g = self.mod.get_gate()
         self.assertEqual(g["n_trades"], 1)  # bad row skipped, not fatal

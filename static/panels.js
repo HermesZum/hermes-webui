@@ -5457,8 +5457,18 @@ function _fxRenderReports(r) {
       return `<div class="fx-report-card fx-report-missing"><div class="fx-report-title">${esc(c.label)}</div><div class="fx-muted">${esc(c.reason || 'unavailable')}</div></div>`;
     }
     const d = c.data || {};
-    const gate = (d.gate_pass === undefined && d.gate_pass_applied === undefined && d.survival_pass === undefined)
-      ? '' : `<div class="fx-report-gates">${d.gate_pass !== undefined ? _fxGateBadge(d.gate_pass) + '<span class="fx-gate-label">canonical</span>' : ''}${d.gate_pass_applied !== undefined ? _fxGateBadge(d.gate_pass_applied) + '<span class="fx-gate-label">applied</span>' : ''}${d.survival_pass !== undefined ? _fxGateBadge(d.survival_pass) + '<span class="fx-gate-label">survival</span>' : ''}</div>`;
+    const gateBits = [];
+    if (d.gate_pass_persymbol !== undefined) {
+      gateBits.push(_fxGateBadge(d.gate_pass_persymbol) + '<span class="fx-gate-label">per-symbol (authoritative)</span>');
+      if (d.gate_pass !== undefined && d.gate_pass !== d.gate_pass_persymbol) {
+        gateBits.push(_fxGateBadge(d.gate_pass) + '<span class="fx-gate-label">legacy applied-config</span>');
+      }
+    } else {
+      if (d.gate_pass !== undefined) gateBits.push(_fxGateBadge(d.gate_pass) + '<span class="fx-gate-label">canonical</span>');
+      if (d.gate_pass_applied !== undefined) gateBits.push(_fxGateBadge(d.gate_pass_applied) + '<span class="fx-gate-label">applied</span>');
+    }
+    if (d.survival_pass !== undefined) gateBits.push(_fxGateBadge(d.survival_pass) + '<span class="fx-gate-label">survival</span>');
+    const gate = gateBits.length ? `<div class="fx-report-gates">${gateBits.join('')}</div>` : '';
     const briefing = d.briefing_line ? `<div class="fx-briefing">${esc(d.briefing_line)}</div>` : '';
     const when = c.mtime ? new Date(c.mtime * 1000).toISOString().slice(0, 16).replace('T', ' ') : '';
     return `<div class="fx-report-card"><div class="fx-report-head"><span class="fx-report-title">${esc(c.label)}</span><span class="fx-report-when">${when} UTC</span></div>${gate}${briefing}</div>`;
@@ -5575,8 +5585,10 @@ function _fxRenderGate(g) {
       <span>${_fxPassBadge(c.pass)} <b>${c.value === null || c.value === undefined ? '—' : esc(String(c.value))}</b></span>
     </div>`).join('');
   const verdictCls = g.ready ? 'fx-badge-pass' : '';
+  const src = g.source ? `<div class="fx-muted" style="font-size:11px;margin-bottom:10px">ledger: ${esc(g.source)}${g.n_open !== undefined ? ` · ${g.n_open} open` : ''}</div>` : '';
   return `<div class="main-view-content">
     <div class="fx-verdict ${verdictCls}">${esc(g.verdict || '')}</div>
+    ${src}
     <div class="fx-section">
       <div class="fx-section-title">Criteria</div>
       ${crit}
