@@ -12189,7 +12189,7 @@ def _static_version_token() -> str:
             # (e.g. the /compress context-ring fix in commands.js would never
             # reach clients until a manual hard-refresh). Keep this list in
             # sync with the `<script src="static/*.js?v=...">` tags.
-            "ui.js", "panels.js", "boot.js", "index.html", "i18n.js", "style.css",
+            "ui.js", "panels.js", "fx_panel.js", "boot.js", "index.html", "i18n.js", "style.css",
             "commands.js", "messages.js", "sessions.js", "workspace.js",
             "terminal.js", "icons.js", "onboarding.js", "outline.js",
             "assistant_turn_anchors.js", "extension_settings.js", "pwa-startup.js",

@@ -30,6 +30,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +48,49 @@ FX_PROJECT_DIR = Path("/root/workspace/fx-invest-project")
 # must never feed the go-live verdict (audit 2026-09-03).
 DEMO_LEDGER_REL = Path("journal") / "paper_trades.csv"
 GUARD_SCRIPT = Path("/root/.hermes/scripts/fx_consistency_guard.sh")
+
+# ── Usage instrumentation (audit 2026-09-03 P1) ───────────────────────────
+# The server suppresses access logs, so panel usage was unmeasurable. Each
+# /api/fx/* hit bumps a per-endpoint counter file (one line in the log too).
+# Best-effort by design: any failure here must never affect the API response.
+USAGE_LOCK = threading.Lock()
+USAGE_FILE: Optional[Path] = None  # resolved lazily; overridable in tests
+
+
+def _usage_path() -> Optional[Path]:
+    global USAGE_FILE
+    if USAGE_FILE is not None:
+        return USAGE_FILE
+    try:
+        from api.config import STATE_DIR  # webui process context only
+
+        USAGE_FILE = Path(STATE_DIR) / "fx_usage.json"
+    except Exception:  # noqa: BLE001 — instrumentation must never be fatal
+        USAGE_FILE = None
+    return USAGE_FILE
+
+
+def _bump_usage(endpoint: str) -> None:
+    path = _usage_path()
+    if path is None:
+        return
+    try:
+        with USAGE_LOCK:
+            data: Dict[str, Any] = {}
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                data = {}
+            now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            data[endpoint] = {"count": int(data.get(endpoint, {}).get("count", 0)) + 1,
+                              "last": now}
+            data["_updated"] = now
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+            os.replace(tmp, path)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("fx_bridge usage counter skipped: %s", e)
+    logger.info("fx_api hit endpoint=%s", endpoint)
 
 NOTE_TYPES = ("decision", "reference", "strategy", "plan", "incident")
 NOTES_CACHE_TTL = 60.0          # seconds
@@ -484,6 +528,7 @@ def get_calendar() -> Dict[str, Any]:
 # ── HTTP handlers (None = handled; never return a value) ─────────────────
 def handle_fx_notes_get(handler, parsed) -> None:
     try:
+        _bump_usage("notes")
         q = parsed.query
         if isinstance(q, str):
             from urllib.parse import parse_qs
@@ -498,6 +543,7 @@ def handle_fx_notes_get(handler, parsed) -> None:
 
 def handle_fx_reports_get(handler, parsed) -> None:
     try:
+        _bump_usage("reports")
         j(handler, list_reports())
     except Exception as e:  # noqa: BLE001
         logger.error("fx_bridge reports error: %s", e)
@@ -506,6 +552,7 @@ def handle_fx_reports_get(handler, parsed) -> None:
 
 def handle_fx_health_get(handler, parsed) -> None:
     try:
+        _bump_usage("health")
         j(handler, get_health())
     except Exception as e:  # noqa: BLE001
         logger.error("fx_bridge health error: %s", e)
@@ -514,6 +561,7 @@ def handle_fx_health_get(handler, parsed) -> None:
 
 def handle_fx_gate_get(handler, parsed) -> None:
     try:
+        _bump_usage("gate")
         j(handler, get_gate())
     except Exception as e:  # noqa: BLE001
         logger.error("fx_bridge gate error: %s", e)
@@ -522,6 +570,7 @@ def handle_fx_gate_get(handler, parsed) -> None:
 
 def handle_fx_actions_get(handler, parsed) -> None:
     try:
+        _bump_usage("actions")
         j(handler, get_actions())
     except Exception as e:  # noqa: BLE001
         logger.error("fx_bridge actions error: %s", e)
@@ -530,6 +579,7 @@ def handle_fx_actions_get(handler, parsed) -> None:
 
 def handle_fx_position_get(handler, parsed) -> None:
     try:
+        _bump_usage("position")
         j(handler, get_position())
     except Exception as e:  # noqa: BLE001
         logger.error("fx_bridge position error: %s", e)
@@ -538,6 +588,7 @@ def handle_fx_position_get(handler, parsed) -> None:
 
 def handle_fx_calendar_get(handler, parsed) -> None:
     try:
+        _bump_usage("calendar")
         j(handler, get_calendar())
     except Exception as e:  # noqa: BLE001
         logger.error("fx_bridge calendar error: %s", e)

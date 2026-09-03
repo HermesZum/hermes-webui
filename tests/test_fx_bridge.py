@@ -306,6 +306,41 @@ class FxBridgeHandlers(unittest.TestCase):
         self.assertTrue(h.payload["available"])
 
 
+class FxBridgeUsage(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmp = Path(tempfile.mkdtemp())
+        self.mod, self.vault, self.results = _load_bridge(self.tmp)
+        import api.helpers as helpers  # noqa
+        self._orig_j, self._orig_bad = self.mod.j, self.mod.bad
+        self.mod.j = lambda h, obj: h._set(obj)
+        self.mod.bad = lambda h, msg, status=400: h._set({"error": msg}, status)
+
+    def test_usage_counter_increments(self):
+        import json as _json
+        ufile = self.tmp / "fx_usage.json"
+        self.mod.USAGE_FILE = ufile
+        self.mod._invalidate_caches()
+        h = FakeHandler()
+        self.mod.handle_fx_health_get(h, _make_parsed(_Query("")))
+        self.mod.handle_fx_health_get(h, _make_parsed(_Query("")))
+        data = _json.loads(ufile.read_text(encoding="utf-8"))
+        self.assertEqual(data["health"]["count"], 2)
+        self.assertIn("_updated", data)
+
+    def test_usage_failure_never_breaks_handler(self):
+        # unwritable path → counter silently skipped, handler still answers
+        self.mod.USAGE_FILE = Path("/proc/definitely/not/writable/fx_usage.json")
+        self.mod._invalidate_caches()
+        h = FakeHandler()
+        self.mod.handle_fx_health_get(h, _make_parsed(_Query("")))
+        self.assertTrue(h.payload.get("available") is not None or "guard" in h.payload)
+        self.mod.USAGE_FILE = None
+
+    def tearDown(self):
+        self.mod.USAGE_FILE = None
+
+
 class FxBridgeGate(unittest.TestCase):
     def setUp(self):
         import tempfile
