@@ -42,6 +42,10 @@ logger = logging.getLogger(__name__)
 # ── Paths (overridable in tests) ──────────────────────────────────────────
 VAULT_FX_DIR = Path("/root/vault/knowledge/fx")
 FX_PROJECT_DIR = Path("/root/workspace/fx-invest-project")
+# Demo trade ledger — the ONLY source for the graduation gate. The backtest
+# artifact results/trades.csv (synthetic 2024 trades from scripts/backtest.py)
+# must never feed the go-live verdict (audit 2026-09-03).
+DEMO_LEDGER_REL = Path("journal") / "paper_trades.csv"
 GUARD_SCRIPT = Path("/root/.hermes/scripts/fx_consistency_guard.sh")
 
 NOTE_TYPES = ("decision", "reference", "strategy", "plan", "incident")
@@ -170,8 +174,11 @@ def list_notes(kind: Optional[str] = None, limit: int = 200) -> Dict[str, Any]:
 # ── Reports ───────────────────────────────────────────────────────────────
 def _extract_report_data(data: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
-    for key in ("briefing_line", "gate_pass", "gate_pass_applied", "survival_pass",
-                "survival_evaluated_at", "generated", "n_paths", "n_trades"):
+    keys = ("briefing_line", "gate_pass", "gate_pass_applied", "survival_pass",
+            "survival_evaluated_at", "generated", "n_paths", "n_trades",
+            # per-symbol gate schema (authoritative since 2026-09-02 refactor)
+            "gate_pass_persymbol", "authoritative_gate")
+    for key in keys:
         if key in data:
             out[key] = data[key]
     # common param shapes
@@ -301,11 +308,13 @@ def _read_json(path: Path) -> Optional[Dict[str, Any]]:
 
 # ── Graduation gate ───────────────────────────────────────────────────────
 def get_gate() -> Dict[str, Any]:
-    """Graduation-gate progress from the live trade ledger (results/trades.csv).
+    """Graduation-gate progress from the LIVE demo ledger.
 
+    Source: ``journal/paper_trades.csv`` (written by the paper trader /
+    journal pipeline) plus ``data/paper_state.json`` for open-trade count.
     Criteria per the vault v2-runner approval: >= GRADUATION_N_MIN journaled
     demo trades, expectancy > 0 in R, plan_followed >= 85%. The percentage
-    itself requires a journal audit (not derivable from trades.csv), so it is
+    itself requires a journal audit (not derivable from the ledger), so it is
     reported as ``journal_audit_required`` — the panel must not fabricate it.
     Read-only: this computes over the ledger, it never writes.
     """
@@ -314,16 +323,16 @@ def get_gate() -> Dict[str, Any]:
         return _gate_cache["gate"]
     try:
         rows: List[Dict[str, Any]] = []
-        path = FX_PROJECT_DIR / "results" / "trades.csv"
+        path = FX_PROJECT_DIR / DEMO_LEDGER_REL
         with path.open(encoding="utf-8", newline="") as fh:
             for r in csv.DictReader(fh):
                 try:
                     rows.append({
                         "pair": (r.get("pair") or "").strip(),
-                        "date": (r.get("date") or "").strip(),
+                        "date": (r.get("entry_time") or r.get("date") or "").strip(),
                         "dir": (r.get("dir") or "").strip(),
                         "r_net": float(r.get("r_net") or 0.0),
-                        "reason": (r.get("reason") or "").strip(),
+                        "reason": (r.get("exit_reason") or r.get("reason") or "").strip(),
                     })
                 except (TypeError, ValueError):
                     continue
@@ -331,13 +340,19 @@ def get_gate() -> Dict[str, Any]:
         exp = (sum(r["r_net"] for r in rows) / n) if n else 0.0
         wins = sum(1 for r in rows if r["r_net"] > 0)
         total_r = sum(r["r_net"] for r in rows)
+        open_n = 0
+        st = _read_json(FX_PROJECT_DIR / "data" / "paper_state.json")
+        if st:
+            open_n = len(st.get("positions") or {})
         ready_partial = n >= GRADUATION_N_MIN and exp > 0
         gate: Dict[str, Any] = {
             "available": True,
+            "source": str(path),
             "n_min": GRADUATION_N_MIN,
             "plan_pct_required": GRADUATION_PLAN_PCT,
             "graduation_size": GRADUATION_SIZE,
             "n_trades": n,
+            "n_open": open_n,
             "expectancy_R": round(exp, 3),
             "total_r": round(total_r, 2),
             "win_rate_pct": round(wins / n * 100, 1) if n else 0.0,
@@ -345,7 +360,9 @@ def get_gate() -> Dict[str, Any]:
             "plan_followed_status": "journal_audit_required",
             "ready": ready_partial,
             "verdict": ("READY (confirm plan_followed from journal, then go live at 1/4 size)"
-                        if ready_partial else "PENDING"),
+                        if ready_partial else
+                        f"PENDING — {n}/{GRADUATION_N_MIN} demo trades journaled"
+                        + ("" if exp >= 0 else f", expectancy {round(exp, 3)}R must be > 0")),
             "criteria": [
                 {"label": f"Journaled trades >= {GRADUATION_N_MIN}", "value": n,
                  "pass": n >= GRADUATION_N_MIN},
